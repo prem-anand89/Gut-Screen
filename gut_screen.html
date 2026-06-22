@@ -654,6 +654,20 @@ function computeScores(answers, opts) {
   const raw = Array.isArray(answers) ? (id) => answers[QID[id]] : (id) => answers[id];
   const bristolSignal = bristolTransit(opts && opts.bristol);
 
+  // GSRS-cluster aggregation — co-design output: per-cluster norms feed the
+  // per-cluster bars on results and the pattern engine. Computed only over
+  // items that have a `cluster` tag (currently the 15 GI core items).
+  const clusterAgg = {};
+  for (const q of QUESTIONS) {
+    if (!q.cluster) continue;
+    const v = raw(q.id);
+    if (v === 'na') continue;
+    const c = clusterAgg[q.cluster] = clusterAgg[q.cluster] || { sum: 0, max: 0, answered: 0 };
+    if (typeof v === 'number') { c.sum += v; c.max += itemMax(q); c.answered++; }
+  }
+  const clusterNorm = {};
+  for (const k of Object.keys(clusterAgg)) clusterNorm[k] = clusterAgg[k].max > 0 ? clusterAgg[k].sum / clusterAgg[k].max : null;
+
   const secScores = {}, secNorm = {}, bands = {}, secAnswered = {}, secApplicableMax = {};
   let answeredItems = 0, scoredItems = 0;
   const coreNorms = [], screenNorms = [];
@@ -701,7 +715,7 @@ function computeScores(answers, opts) {
       : ''),
   });
 
-  return { secScores, secNorm, secApplicableMax, bands, secAnswered, completeness, index, severity, bristolSignal };
+  return { secScores, secNorm, secApplicableMax, bands, secAnswered, completeness, index, severity, bristolSignal, clusterAgg, clusterNorm };
 }
 
 // Shared confidence descriptor (Phase 0.5 §3 mechanism).
@@ -718,6 +732,142 @@ function scoreConfidence(scoreObj) {
 
 __e.BANDS = BANDS; __e.computeScores = computeScores; __e.scoreConfidence = scoreConfidence;
 __e.BRISTOL_ALPHA = BRISTOL_ALPHA; __e.bristolTransit = bristolTransit;
+return __e;
+};
+
+/* ============================================================================
+   patterns.js — first-cut pattern engine (co-design DRAFT). Consumes scoring
+   output + driver extras, returns an ordered list of patterns the patient
+   should "discuss with your clinician." NOT a diagnosis layer: each pattern
+   has a plain-English description and a conservative framing. Rules are
+   intentionally simple (sum-of-conditions, thresholded), so they're auditable
+   and easy to tune against pilot data — see TRIM_PLAN.method.
+
+   Each pattern fires if its rule returns truthy. Confidence comes from how
+   many of the supporting signals were actually answered (so a pattern firing
+   off a single sparse driver gets "Low" confidence, not "High"). Patterns are
+   returned ordered by the engine's listed priority then by the confidence,
+   so the most actionable item shows first.
+   ========================================================================== */
+__modules['patterns.js'] = function(__e){
+const { psychLoadScore, dietBurden } = __req('scales.js');
+
+// Helpers: each evaluator returns { fires, signals } so callers can compute a
+// data-coverage confidence without re-checking the same conditions.
+const ge = (v, t) => v != null && v >= t;
+const le = (v, t) => v != null && v <= t;
+const clu = (s, k) => (s.clusterNorm && s.clusterNorm[k] != null) ? s.clusterNorm[k] : null;
+const gi  = (s) => (s.secNorm && s.secNorm.GI != null) ? s.secNorm.GI : null;
+
+const PATTERNS = [
+  {
+    id: 'constipation_dominant',
+    label: 'Constipation-dominant pattern',
+    desc: 'Bowel-movement burden weighted toward slow transit. Fibre, hydration, and movement are usually the first lever; rule out other causes with your clinician.',
+    eval: (s, ex) => {
+      const constipCluster = ge(clu(s, 'Constipation'), 0.4);
+      const slowStool      = le(ex.bristol, 2);
+      const notDiarrhoea   = !ge(clu(s, 'Diarrhoea'), 0.3);
+      const signals = [constipCluster, slowStool, notDiarrhoea];
+      return { fires: (constipCluster || slowStool) && notDiarrhoea, signals };
+    },
+  },
+  {
+    id: 'diarrhoea_dominant',
+    label: 'Loose-stool / urgency pattern',
+    desc: 'Bowel-movement burden weighted toward urgency or loose stools. Worth screening with your clinician for triggers and infection.',
+    eval: (s, ex) => {
+      const diarrCluster = ge(clu(s, 'Diarrhoea'), 0.4);
+      const fastStool    = ge(ex.bristol, 6);
+      const notConstip   = !ge(clu(s, 'Constipation'), 0.3);
+      const signals = [diarrCluster, fastStool, notConstip];
+      return { fires: (diarrCluster || fastStool) && notConstip, signals };
+    },
+  },
+  {
+    id: 'reflux_upper_gi',
+    label: 'Reflux / upper-GI pattern',
+    desc: 'Symptom burden concentrated in upper-GI and reflux. Lifestyle factors and longstanding acid-blocker use are worth reviewing with your clinician.',
+    eval: (s, ex) => {
+      const reflux = ge(clu(s, 'Reflux'), 0.4);
+      const indig  = ge(clu(s, 'Indigestion'), 0.5);
+      const ppi    = !!(ex.meds && ex.meds.ppi);
+      const signals = [reflux, indig, ppi];
+      return { fires: reflux || indig, signals };
+    },
+  },
+  {
+    id: 'stress_driven',
+    label: 'Stress-linked (gut-brain) pattern',
+    desc: 'High psychological load alongside GI symptoms. Gut-brain interventions (stress management, sleep, gut-directed therapies) often help here.',
+    eval: (s, ex) => {
+      const giPresent = ge(gi(s), 0.25);
+      const psych = psychLoadScore({ pss4Score: ex.pss4Score, bgAnxiety: ex.bgAnxiety, bgMood: ex.bgMood });
+      const highPsych = ge(psych, 50);
+      const signals = [giPresent, highPsych];
+      return { fires: giPresent && highPsych, signals };
+    },
+  },
+  {
+    id: 'post_disruptor',
+    label: 'Recent gut-disruptor pattern',
+    desc: 'Recent antibiotic, acid-blocker, or NSAID use can shift the microbiome. A recovery-supportive window of a few months is usually appropriate — discuss with your clinician.',
+    eval: (s, ex) => {
+      const anyDisruptor = !!(ex.meds && (ex.meds.abx || ex.meds.ppi || ex.meds.nsaid));
+      const giPresent = ge(gi(s), 0.2);
+      const signals = [anyDisruptor, giPresent];
+      return { fires: anyDisruptor && giPresent, signals };
+    },
+  },
+  {
+    id: 'inflammatory_immune',
+    label: 'Inflammatory / immune-leaning pattern',
+    desc: 'Food reactions, histamine-type symptoms, or atopy alongside gut symptoms. Worth identifying triggers with your clinician (e.g. a structured elimination trial).',
+    eval: (s, ex) => {
+      const im = s.secNorm && s.secNorm.IM;
+      const imHigh = ge(im, 0.4);
+      const giPresent = ge(gi(s), 0.25);
+      const signals = [imHigh, giPresent];
+      return { fires: imHigh && giPresent, signals };
+    },
+  },
+  {
+    id: 'lifestyle_modifiable',
+    label: 'Lifestyle-driven modifiable pattern',
+    desc: 'Several modifiable factors (diet quality, alcohol, activity) point to high-yield behaviour changes worth focusing on first.',
+    eval: (s, ex) => {
+      const db = dietBurden({ dietFibre: ex.dietFibre, dietProcessed: ex.dietProcessed });
+      const dietBad = ge(db, 0.5);
+      const alcHigh = ge(ex.alcohol, 2);
+      const lowAct  = le(ex.activity, 1);
+      const signals = [dietBad, alcHigh, lowAct];
+      return { fires: signals.filter(Boolean).length >= 2, signals };
+    },
+  },
+];
+
+const CONFIDENCE_BANDS = [
+  { min: 3, label: 'High',     color: '#0F6E56' },
+  { min: 2, label: 'Moderate', color: '#BA7517' },
+  { min: 0, label: 'Low',      color: '#999' },
+];
+
+function detectPatterns(score, ex) {
+  const ex_ = ex || {};
+  const fired = [];
+  for (const p of PATTERNS) {
+    const r = p.eval(score, ex_);
+    if (!r.fires) continue;
+    const hits = r.signals.filter(Boolean).length;
+    const conf = CONFIDENCE_BANDS.find(c => hits >= c.min);
+    fired.push({ id: p.id, label: p.label, desc: p.desc, confidence: conf.label, confColor: conf.color, signalHits: hits });
+  }
+  // Stable order by engine priority then confidence (High > Mod > Low).
+  const order = ['High', 'Moderate', 'Low'];
+  return fired.sort((a, b) => order.indexOf(a.confidence) - order.indexOf(b.confidence));
+}
+
+__e.PATTERNS = PATTERNS; __e.detectPatterns = detectPatterns;
 return __e;
 };
 
@@ -782,6 +932,7 @@ function pilotExportCSV(db) {
   const { SECTIONS, QUESTIONS } = __req('schema.js');
   const { computeScores } = __req('scoring.js');
   const { pss4Score, psychLoadScore, dietBurden } = __req('scales.js');
+  const { PATTERNS, detectPatterns } = __req('patterns.js');
   const d = normalise(db);
 
   const cell = (v) => (v == null ? '' : String(v));            // number | 'na' | ''
@@ -789,14 +940,17 @@ function pilotExportCSV(db) {
   const bool = (b, present) => (present ? (b ? 1 : 0) : '');
   const csv  = (s) => /[",\n]/.test(String(s)) ? `"${String(s).replace(/"/g, '""')}"` : String(s);
 
+  const CLUSTERS = ['Reflux', 'Pain', 'Indigestion', 'Diarrhoea', 'Constipation'];
   const header = [
     'patient', 'visit', 'date_iso', 'completeness', 'index', 'band', 'capped',
     ...SECTIONS.map(s => 'norm_' + s.id),
+    ...CLUSTERS.map(c => 'cluster_' + c.toLowerCase()),
     ...QUESTIONS.map(q => 'q_' + q.id),
     'ex_pss4_1', 'ex_pss4_2', 'ex_pss4_3', 'ex_pss4_4', 'ex_pss4Score', 'ex_psychLoad',
     'ex_bristol', 'ex_bristolSignal', 'ex_nrsPain', 'ex_painRegion',
     'ex_med_abx', 'ex_med_ppi', 'ex_med_nsaid',
     'ex_dietFibre', 'ex_dietProcessed', 'ex_dietBurden', 'ex_alcohol', 'ex_activity',
+    ...PATTERNS.map(p => 'pat_' + p.id),
   ];
   const rows = [header];
 
@@ -805,16 +959,20 @@ function pilotExportCSV(db) {
       const a = v.answers || {}, ex = v.extras || {}, meds = ex.meds || null, pss = ex.pss4 || [];
       const score = computeScores(a, { bristol: ex.bristol });
       const ps = pss4Score(pss);
-      const drv = { pss4Score: ps, bgAnxiety: a.bg_anxiety, bgMood: a.bg_mood, dietFibre: ex.dietFibre, dietProcessed: ex.dietProcessed };
+      const drv = { pss4Score: ps, bgAnxiety: a.bg_anxiety, bgMood: a.bg_mood, dietFibre: ex.dietFibre, dietProcessed: ex.dietProcessed,
+                    bristol: ex.bristol, meds, alcohol: ex.alcohol, activity: ex.activity };
+      const fired = new Set(detectPatterns(score, drv).map(p => p.id));
       rows.push([
         'P' + (pi + 1), cell(v.id), v.date ? new Date(v.date).toISOString().slice(0, 10) : '',
         score.completeness, score.index, score.severity.label, score.severity.capped ? 1 : 0,
         ...SECTIONS.map(s => num(score.secNorm[s.id])),
+        ...CLUSTERS.map(c => num(score.clusterNorm && score.clusterNorm[c])),
         ...QUESTIONS.map(q => cell(a[q.id])),
         cell(pss[0]), cell(pss[1]), cell(pss[2]), cell(pss[3]), cell(ps), cell(psychLoadScore(drv)),
         cell(ex.bristol), num(score.bristolSignal), cell(ex.nrsPain), cell(ex.painRegion),
         bool(meds && meds.abx, !!meds), bool(meds && meds.ppi, !!meds), bool(meds && meds.nsaid, !!meds),
         cell(ex.dietFibre), cell(ex.dietProcessed), num(dietBurden(drv)), cell(ex.alcohol), cell(ex.activity),
+        ...PATTERNS.map(p => fired.has(p.id) ? 1 : 0),
       ]);
     });
   });
@@ -837,6 +995,7 @@ const { computeScores, scoreConfidence } = __req('scoring.js');
 const { RED_FLAGS, anyRedFlag, firedRedFlags, RED_FLAG_BANNER } = __req('redflags.js');
 const { el, esc, toast } = __req('util.js');
 const Store = __req('storage.js');
+const { detectPatterns } = __req('patterns.js');
 
 let answers = {};      // id -> value (absent = unanswered)
 let redflags = {};     // rf_id -> bool
@@ -1130,6 +1289,19 @@ function calc() {
       bars.appendChild(el('div', { class: 'q-sub', style: 'margin:-4px 0 12px;padding-left:2px;color:var(--inks)' },
         `↳ Stool transit ${addPts > 0 ? `adds +${addPts} pts to` : 'adds nothing to'} gut-core${bt ? ` · Type ${bt.n} (${esc(bt.tag)})` : ''} — capped so it can’t dominate.`));
     }
+    // GSRS per-cluster sub-bars: the GI core breaks down into 5 validated
+    // syndromes (Reflux, Pain, Indigestion, Diarrhoea, Constipation). Showing
+    // them surfaces the symptom shape, not just the magnitude.
+    if (s.id === 'GI' && score.clusterAgg) {
+      const order = ['Reflux', 'Pain', 'Indigestion', 'Diarrhoea', 'Constipation'];
+      order.forEach(k => {
+        const c = score.clusterAgg[k]; if (!c || c.max === 0) return;
+        const cp = Math.round(c.sum / c.max * 100);
+        bars.appendChild(el('div', { class: 'bar-row', style: 'padding-left:18px' },
+          `<div class="bar-label"><span class="muted">↳ ${esc(k)}</span><span class="muted">${c.sum}/${c.max} · ${cp}%</span></div>
+           <div class="bar-track" style="height:6px"><div class="bar-fill" style="width:${cp}%;background:${s.color};opacity:.6"></div></div>`));
+      });
+    }
   });
   out.appendChild(bars);
 
@@ -1152,6 +1324,25 @@ function calc() {
      ${f.score ? `<div class="dl">${esc(f.score)}</div>` : ''}`)));
   driv.appendChild(dg);
   out.appendChild(driv);
+
+  // Patterns — first-cut clinical-discussion patterns from drivers + clusters.
+  // Conservatively framed ("discuss with your clinician"), confidence based on
+  // how many of the supporting signals were actually answered.
+  const patterns = detectPatterns(score, driverExtras);
+  if (patterns.length > 0) {
+    const pcard = el('div', { class: 'card' });
+    pcard.appendChild(el('h2', {}, 'Patterns to discuss with your clinician'));
+    pcard.appendChild(el('div', { class: 'q-sub' }, 'First-cut patterns from your answers and drivers. These are not diagnoses — they are starting points for a conversation with your clinician.'));
+    patterns.forEach(p => {
+      pcard.appendChild(el('div', { class: 'pat', style: 'padding:12px 14px;border:1px solid #E1E5EB;border-radius:8px;margin-top:10px;background:#F9FAFB' },
+        `<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+           <div style="font-weight:600">${esc(p.label)}</div>
+           <span style="font-size:11px;padding:2px 8px;border-radius:999px;background:${p.confColor};color:#fff">${esc(p.confidence)} confidence</span>
+         </div>
+         <div class="q-sub" style="margin-top:6px;color:var(--inks);line-height:1.5">${esc(p.desc)}</div>`));
+    });
+    out.appendChild(pcard);
+  }
 
   // Save-a-visit + pilot-CSV download. Until the clinician/database surface
   // lands, this is the only way a response enters the pilot dataset.
