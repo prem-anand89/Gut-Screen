@@ -768,6 +768,59 @@ function mergeImport(currentDb, importedRaw) {
   return { db: cur, added: { patients: addedPatients, visits: addedVisits } };
 }
 __e.blankDB = blankDB; __e.loadDB = loadDB; __e.saveDB = saveDB; __e.uid = uid; __e.exportDB = exportDB; __e.mergeImport = mergeImport;
+
+// ── PILOT / RESEARCH EXPORT ──────────────────────────────────────────────────
+// De-identified, schema-driven CSV: one row per visit, one column per item +
+// every driver + the derived scores. This is the artifact the TRIM_PLAN method
+// runs on (corrected item-total correlations, inter-item redundancy, weight
+// tuning). Scores are RECOMPUTED from raw answers/extras here so the export
+// always reflects the CURRENT scoring model, never a stale stored value.
+//   - No patient name/id is emitted; patients are anonymised to P1, P2, … with a
+//     stable per-export index so repeated visits stay linkable for the analysis.
+//   - Raw item value per cell: number (0–N), 'na' (not applicable), or '' (blank).
+function pilotExportCSV(db) {
+  const { SECTIONS, QUESTIONS } = __req('schema.js');
+  const { computeScores } = __req('scoring.js');
+  const { pss4Score, psychLoadScore, dietBurden } = __req('scales.js');
+  const d = normalise(db);
+
+  const cell = (v) => (v == null ? '' : String(v));            // number | 'na' | ''
+  const num  = (n) => (n == null ? '' : (Math.round(n * 1000) / 1000)); // normalised 0–1
+  const bool = (b, present) => (present ? (b ? 1 : 0) : '');
+  const csv  = (s) => /[",\n]/.test(String(s)) ? `"${String(s).replace(/"/g, '""')}"` : String(s);
+
+  const header = [
+    'patient', 'visit', 'date_iso', 'completeness', 'index', 'band', 'capped',
+    ...SECTIONS.map(s => 'norm_' + s.id),
+    ...QUESTIONS.map(q => 'q_' + q.id),
+    'ex_pss4_1', 'ex_pss4_2', 'ex_pss4_3', 'ex_pss4_4', 'ex_pss4Score', 'ex_psychLoad',
+    'ex_bristol', 'ex_bristolSignal', 'ex_nrsPain', 'ex_painRegion',
+    'ex_med_abx', 'ex_med_ppi', 'ex_med_nsaid',
+    'ex_dietFibre', 'ex_dietProcessed', 'ex_dietBurden', 'ex_alcohol', 'ex_activity',
+  ];
+  const rows = [header];
+
+  d.patients.forEach((p, pi) => {
+    (p.visits || []).forEach(v => {
+      const a = v.answers || {}, ex = v.extras || {}, meds = ex.meds || null, pss = ex.pss4 || [];
+      const score = computeScores(a, { bristol: ex.bristol });
+      const ps = pss4Score(pss);
+      const drv = { pss4Score: ps, bgAnxiety: a.bg_anxiety, bgMood: a.bg_mood, dietFibre: ex.dietFibre, dietProcessed: ex.dietProcessed };
+      rows.push([
+        'P' + (pi + 1), cell(v.id), v.date ? new Date(v.date).toISOString().slice(0, 10) : '',
+        score.completeness, score.index, score.severity.label, score.severity.capped ? 1 : 0,
+        ...SECTIONS.map(s => num(score.secNorm[s.id])),
+        ...QUESTIONS.map(q => cell(a[q.id])),
+        cell(pss[0]), cell(pss[1]), cell(pss[2]), cell(pss[3]), cell(ps), cell(psychLoadScore(drv)),
+        cell(ex.bristol), num(score.bristolSignal), cell(ex.nrsPain), cell(ex.painRegion),
+        bool(meds && meds.abx, !!meds), bool(meds && meds.ppi, !!meds), bool(meds && meds.nsaid, !!meds),
+        cell(ex.dietFibre), cell(ex.dietProcessed), num(dietBurden(drv)), cell(ex.alcohol), cell(ex.activity),
+      ]);
+    });
+  });
+  return rows.map(r => r.map(csv).join(',')).join('\n');
+}
+__e.pilotExportCSV = pilotExportCSV;
 return __e;
 };
 
@@ -1085,8 +1138,12 @@ return __e;
    ========================================================================== */
 __modules['app.js'] = function(__e){
 const Patient = __req('ui-patient.js');
+const Store = __req('storage.js');
 function boot() { Patient.reset(); Patient.render(); }
 boot();
+// Pilot-data hook: until the clinician/database surface lands, a researcher can
+// pull the de-identified item-level CSV from the console via __gutPilotCSV().
+if (typeof window !== 'undefined') window.__gutPilotCSV = () => Store.pilotExportCSV(Store.loadDB());
 return __e;
 };
 
