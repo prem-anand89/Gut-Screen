@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>Beyond Mechanics · Gut Screen (v2)</title>
+<title>Beyond Mechanics · Gut Health Screen (v2)</title>
 <style>/* ============================================================================
    gut_screen.html (v2) — clean-slate rebuild. Questionnaire + scoring only.
    Single self-contained offline file. Palette ported from BM_Gut_Suite v7.
@@ -409,7 +409,7 @@ const RECALL_NOTE = 'Answer for how things have been over the past 2 weeks.';
 
 // ── MODIFIABLE-DRIVER INSTRUMENTS ───────────────────────────────────────────
 // Shown alongside the result and stored on the visit (extras), but kept OUT of
-// the Dysbiosis Index. Designed to be consumed by the deferred patterns/strain
+// the GI Symptom Burden score. Designed to be consumed by the patterns/triage
 // engines (e.g. high PSS-4 -> psychobiotic pattern; Bristol -> bowel direction).
 
 // Modified 4-item Perceived Stress Scale (Du et al. 2023). 0–4 anchors; items
@@ -587,8 +587,8 @@ return __e;
 };
 
 /* ============================================================================
-   scoring.js — hybrid Dysbiosis Index (STUB, provisional until co-design locks
-   the model). Carries forward the proven Phase 0/0.5 mechanisms:
+   scoring.js — hybrid GI Symptom Burden index (STUB, provisional until co-design
+   locks the model). Carries forward the proven Phase 0/0.5 mechanisms:
      - null = unanswered (NOT 0): honest completeness, no false "minimal".
      - domain-MEAN normalisation (0–1) to remove item-count weighting bias.
      - GI-dominance hook: 'core'-role domains drive the Index; 'screen' domains
@@ -611,10 +611,10 @@ const BANDS = [
   { label: 'Severe',        maxPct: Infinity,  color: '#A32D2D', bg: '#FCEBEB', cls: 'sev-sev' },
 ];
 const SEVERITY_DESC = {
-  'Minimal':       'Minimal indication of dysbiosis on this screen.',
-  'Mild–Moderate': 'Mild-to-moderate indication — worth discussing with your clinician.',
-  'Significant':   'Significant indication — clinician-guided assessment recommended.',
-  'Severe':        'Strong indication — comprehensive clinical assessment recommended.',
+  'Minimal':       'Minimal gut-symptom burden on this screen.',
+  'Mild–Moderate': 'Mild-to-moderate gut-symptom burden — worth discussing with your clinician.',
+  'Significant':   'Significant gut-symptom burden — clinician-guided assessment recommended.',
+  'Severe':        'High gut-symptom burden — comprehensive clinical assessment recommended.',
 };
 
 function bandForPct(pct, coreLow) {
@@ -963,6 +963,85 @@ return __e;
 };
 
 /* ============================================================================
+   triage.js — clinical triage layer (co-design DRAFT). Maps the safety screen +
+   GI symptom burden + detected patterns onto ONE recommended next step, plus any
+   secondary candidacies. This is clinician-facing GUIDANCE, not prescription, and
+   never names products or specific organisms. The mapping is deliberately simple
+   and auditable; thresholds are provisional and refit at pilot.
+
+   Tier 1 Refer            — safety flags, or uncapped Severe burden, or a
+                             malabsorption signal that needs bloods/clinical review.
+   Tier 2 Clinician-led    — Significant burden or functional motility/visceral
+                             patterns; manual / physical therapy may be an adjunct.
+   Tier 3 Microbiome-support— recent disruptor exposure (strongest rationale) or a
+                             bloating / loose-stool pattern, absent Tier-1 features.
+   Tier 4 Self-management  — lifestyle-led / minimal burden; re-screen to track.
+   ========================================================================== */
+__modules['triage.js'] = function(__e){
+
+const TIERS = {
+  1: { level: 1, label: 'Refer for clinical assessment', color: '#A32D2D',
+       action: 'One or more answers warrant clinician assessment before starting a gut-health program.' },
+  2: { level: 2, label: 'Clinician-led management', color: '#C2622E',
+       action: 'A clinician-guided plan is appropriate; manual or physical therapy may be a useful adjunct for these symptoms.' },
+  3: { level: 3, label: 'Microbiome-support candidate', color: '#BA7517',
+       action: 'A reasonable candidate for a clinician-supervised trial of probiotic / microbiome support.' },
+  4: { level: 4, label: 'Self-management & monitoring', color: '#0F6E56',
+       action: 'Lifestyle-focused self-management is reasonable. Re-screen in 4–6 weeks to track change.' },
+};
+
+// score: computeScores() output · patterns: detectPatterns() output · firedFlags: array
+function triage(score, patterns, firedFlags) {
+  const pids = new Set((patterns || []).map(p => p.id));
+  const band = (score && score.severity) ? score.severity.label : null;
+  const capped = !!(score && score.severity && score.severity.capped);
+  const pain = (score && score.clusterNorm) ? score.clusterNorm.Pain : null;
+  const flags = firedFlags || [];
+  const has = (id) => pids.has(id);
+  const candidacy = { 1: [], 2: [], 3: [], 4: [] };
+
+  // Tier 1 — refer
+  if (flags.length) candidacy[1].push(flags.length + ' safety red-flag answer' + (flags.length > 1 ? 's' : '') + ' present');
+  if (band === 'Severe' && !capped) candidacy[1].push('Severe GI symptom burden');
+  if (has('nutrient_malabsorption')) candidacy[1].push('Possible malabsorption — bloods / clinical review advised');
+
+  // Tier 2 — clinician-led / manual-therapy candidacy
+  if (band === 'Significant') candidacy[2].push('Significant GI symptom burden');
+  if (has('constipation_dominant')) candidacy[2].push('Constipation-dominant (visceral / motility) pattern');
+  if (has('mixed_bowel')) candidacy[2].push('Mixed / alternating bowel pattern');
+  if (has('reflux_upper_gi')) candidacy[2].push('Reflux / upper-GI pattern');
+  if (pain != null && pain >= 0.5) candidacy[2].push('Prominent abdominal-pain cluster');
+
+  // Tier 3 — microbiome-support candidacy
+  if (has('post_disruptor')) candidacy[3].push('Recent gut-disruptor exposure (strongest probiotic-trial rationale)');
+  if (has('bloating_fermentation')) candidacy[3].push('Bloating / fermentation pattern');
+  if (has('diarrhoea_dominant')) candidacy[3].push('Loose-stool / urgency pattern');
+
+  // Tier 4 — self-management / monitor
+  if (has('lifestyle_modifiable')) candidacy[4].push('Modifiable lifestyle factors are the main lever');
+  if (band === 'Minimal') candidacy[4].push('Minimal symptom burden');
+
+  // Primary = most urgent tier with support; default to Tier 4 (monitor).
+  let primary = 4;
+  for (const lvl of [1, 2, 3]) { if (candidacy[lvl].length) { primary = lvl; break; } }
+
+  const result = Object.assign({}, TIERS[primary], { reasons: candidacy[primary].slice() });
+  // Secondary candidacies worth flagging (lower-urgency tiers that still apply).
+  result.alsoConsider = [];
+  for (const lvl of [2, 3, 4]) {
+    if (lvl > primary && candidacy[lvl].length) result.alsoConsider.push({ label: TIERS[lvl].label, reasons: candidacy[lvl] });
+  }
+  // Low data confidence — the core GI section wasn't answered.
+  result.coreUnknown = !!(score && score.coreUnknown);
+  if (result.coreUnknown) result.reasons.push('Note: the core GI section wasn’t completed, so this triage is provisional.');
+  return result;
+}
+
+__e.TIERS = TIERS; __e.triage = triage;
+return __e;
+};
+
+/* ============================================================================
    storage.js — localStorage persistence + export / merge-import. Machinery
    ported from v1 (merge by patient id + visit id = the two-device sync path).
    Visit record shape is generic over the schema, so it survives co-design edits.
@@ -1092,6 +1171,7 @@ const { RED_FLAGS, anyRedFlag, firedRedFlags, RED_FLAG_BANNER } = __req('redflag
 const { el, esc, toast } = __req('util.js');
 const Store = __req('storage.js');
 const { detectPatterns } = __req('patterns.js');
+const { triage } = __req('triage.js');
 
 let answers = {};      // id -> value (absent = unanswered)
 let redflags = {};     // rf_id -> bool
@@ -1346,11 +1426,24 @@ function calc() {
   const sv = score.severity;
   const conf = scoreConfidence(score);
 
+  // Drivers + patterns computed up front so the triage layer can use them and
+  // the triage card can sit near the top of the result (the headline next step).
+  const ps = pss4Score(extras.pss4);
+  const driverExtras = {
+    pss4Score: ps, nrsPain: extras.nrsPain, bristol: extras.bristol,
+    bgAnxiety: answers.bg_anxiety, bgMood: answers.bg_mood,   // folded into psych load
+    meds: extras.meds, dietFibre: extras.dietFibre, dietProcessed: extras.dietProcessed,
+    alcohol: extras.alcohol, activity: extras.activity,
+  };
+  const patterns = detectPatterns(score, driverExtras, answers);
+  const fired = firedRedFlags(redflags);
+  const tri = triage(score, patterns, fired);
+
   const out = document.getElementById('patient-results');
   out.innerHTML = '';
 
   if (anyRedFlag(redflags)) {
-    const items = firedRedFlags(redflags).map(f => `<li>${esc(f.label)}</li>`).join('');
+    const items = fired.map(f => `<li>${esc(f.label)}</li>`).join('');
     out.appendChild(el('div', { class: 'rf-banner' },
       `<div class="rf-ic">⚠️</div><div><div class="rf-title">Please speak with a clinician about these answers</div>
        <div class="rf-body">${esc(RED_FLAG_BANNER)}</div><ul class="rf-list">${items}</ul></div>`));
@@ -1359,13 +1452,30 @@ function calc() {
   if (score.completeness < 80) toast(`${score.completeness}% complete — result shown as provisional.`);
   const hero = el('div', { class: 'card' });
   hero.appendChild(el('div', { class: 'hero' },
-    `<div><div class="big">${sv.index}%</div><div class="sub">Dysbiosis Index</div></div>
+    `<div><div class="big">${sv.index}%</div><div class="sub">GI Symptom Burden</div></div>
      <div style="flex:1;min-width:160px"><span class="pill ${sv.cls}">${esc(sv.label)}</span>
      <div style="font-size:12px;color:var(--inks);margin-top:8px;line-height:1.5">${esc(sv.desc)}</div>
      <div class="conf-note">Confidence: <b>${esc(conf.level)}</b> · ${score.completeness}% complete</div></div>`));
   if (score.completeness < 80) hero.appendChild(el('div', { class: 'prov-caveat' },
     `Provisional result — ${score.completeness}% of scored items answered.`));
   out.appendChild(hero);
+
+  // Triage — the headline next step (clinician guidance, not prescription).
+  const tcard = el('div', { class: 'card', style: `border-left:6px solid ${tri.color}` });
+  tcard.appendChild(el('h2', {}, 'Suggested next step'));
+  tcard.appendChild(el('div', { class: 'row', style: 'align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:4px' },
+    `<span class="pill" style="background:${tri.color};color:#fff">Tier ${tri.level} · ${esc(tri.label)}</span>`));
+  tcard.appendChild(el('div', { style: 'font-size:13px;color:var(--inks);line-height:1.5;margin-top:6px' }, esc(tri.action)));
+  if (tri.reasons.length) tcard.appendChild(el('div', { class: 'q-sub', style: 'margin-top:8px' },
+    'Why: ' + tri.reasons.map(esc).join(' · ')));
+  if (tri.alsoConsider.length) {
+    tcard.appendChild(el('div', { class: 'q-sub', style: 'margin-top:8px;font-weight:600' }, 'Also worth noting:'));
+    tri.alsoConsider.forEach(a => tcard.appendChild(el('div', { class: 'q-sub', style: 'padding-left:4px' },
+      `• ${esc(a.label)} — ${a.reasons.map(esc).join('; ')}`)));
+  }
+  tcard.appendChild(el('div', { class: 'q-sub', style: 'margin-top:10px;font-style:italic;color:#999' },
+    'Clinical guidance for discussion — not a diagnosis or prescription.'));
+  out.appendChild(tcard);
 
   const bars = el('div', { class: 'card' });
   bars.appendChild(el('h2', {}, 'By domain'));
@@ -1402,18 +1512,11 @@ function calc() {
   });
   out.appendChild(bars);
 
-  // Modifiable drivers — context, not part of the Index. Stored in `extras` and
-  // designed to feed the deferred pattern/strain engines.
-  const ps = pss4Score(extras.pss4);
-  const driverExtras = {
-    pss4Score: ps, nrsPain: extras.nrsPain, bristol: extras.bristol,
-    bgAnxiety: answers.bg_anxiety, bgMood: answers.bg_mood,   // folded into psych load
-    meds: extras.meds, dietFibre: extras.dietFibre, dietProcessed: extras.dietProcessed,
-    alcohol: extras.alcohol, activity: extras.activity,
-  };
+  // Modifiable drivers — context, not part of the Index (computed above with the
+  // triage inputs; rendered here).
   const driv = el('div', { class: 'card' });
   driv.appendChild(el('h2', {}, 'Modifiable drivers'));
-  driv.appendChild(el('div', { class: 'q-sub' }, 'Shown for context — not added to the Dysbiosis Index. These feed pattern & strain guidance.'));
+  driv.appendChild(el('div', { class: 'q-sub' }, 'Shown for context — not added to the GI Symptom Burden score. These feed the pattern & triage guidance.'));
   const dg = el('div', { class: 'drivers' });
   modifiableFactors(driverExtras).forEach(f => dg.appendChild(el('div', { class: 'driver' },
     `<div class="dl" style="font-weight:600;margin-bottom:2px">${f.icon} ${esc(f.label)}</div>
@@ -1422,10 +1525,9 @@ function calc() {
   driv.appendChild(dg);
   out.appendChild(driv);
 
-  // Patterns — first-cut clinical-discussion patterns from drivers + clusters.
-  // Conservatively framed ("discuss with your clinician"), confidence based on
-  // how many of the supporting signals were actually answered.
-  const patterns = detectPatterns(score, driverExtras, answers);
+  // Patterns — first-cut clinical-discussion patterns from drivers + clusters
+  // (computed above with the triage inputs). Conservatively framed; confidence
+  // reflects how much supporting data was answered.
   if (patterns.length > 0) {
     const pcard = el('div', { class: 'card' });
     pcard.appendChild(el('h2', {}, 'Patterns to discuss with your clinician'));
