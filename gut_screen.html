@@ -205,16 +205,59 @@ const SCHEMA_VERSION = 1; // v2 generation tag (independent of the v1 file)
 // `scale` to pick a vocabulary; the per-item max comes from that vocabulary.
 const { scaleFor } = __req('scales.js');
 
-// ── SECTIONS — co-design output. Empty until the GI core is locked. ─────────
+// ── SECTIONS — co-design output. ────────────────────────────────────────────
 // Shape: { id, label, full, role, color, bg }
+//   role 'core'   = validated GI anchor; primary driver of the Index.
+//   role 'screen' = downstream screening domain; modifier, not score-dilator.
 const SECTIONS = [
-  // (populated through co-design — GI core first, then screening domains)
+  // Domain 1 (locked): GSRS-derived GI core. 15 items, 0–3 severity, 2-wk recall.
+  { id: 'GI', label: 'GI', full: 'Gut symptoms (GSRS-based)', role: 'core', color: '#0F6E56', bg: '#E1F5EE' },
 ];
 
-// ── QUESTIONS — co-design output. Empty until items are locked. ─────────────
-// Shape: { id, section, scale?, patientText, patientSub?, recall? }
+// ── QUESTIONS — co-design output. ───────────────────────────────────────────
+// Shape: { id, section, scale?, cluster?, patientText, patientSub? }
+// GI items use the DEFAULT 0–3 severity scale. `cluster` tags the 5 validated
+// GSRS syndromes for the per-cluster breakdown shown on results.
 const QUESTIONS = [
-  // (populated through co-design)
+  // ── GI core — Reflux cluster ──
+  { id: 'gsrs_heartburn', section: 'GI', cluster: 'Reflux',
+    patientText: 'Heartburn', patientSub: 'A burning feeling rising from your stomach or chest' },
+  { id: 'gsrs_regurg', section: 'GI', cluster: 'Reflux',
+    patientText: 'Acid reflux', patientSub: 'Sour or bitter fluid coming back up into your throat or mouth' },
+
+  // ── GI core — Abdominal pain cluster ──
+  { id: 'gsrs_pain', section: 'GI', cluster: 'Pain',
+    patientText: 'Abdominal pain', patientSub: 'Aches or pain anywhere in your stomach or abdomen' },
+  { id: 'gsrs_hunger', section: 'GI', cluster: 'Pain',
+    patientText: 'Hunger pains', patientSub: 'A hollow, gnawing, empty feeling that eases after eating' },
+  { id: 'gsrs_nausea', section: 'GI', cluster: 'Pain',
+    patientText: 'Nausea', patientSub: 'Feeling sick or queasy, as if you might vomit' },
+
+  // ── GI core — Indigestion cluster ──
+  { id: 'gsrs_rumbling', section: 'GI', cluster: 'Indigestion',
+    patientText: 'Rumbling or gurgling', patientSub: 'Vibrations or noises in your stomach' },
+  { id: 'gsrs_bloating', section: 'GI', cluster: 'Indigestion',
+    patientText: 'Bloating', patientSub: 'A swollen, tight, or full feeling in your abdomen' },
+  { id: 'gsrs_burping', section: 'GI', cluster: 'Indigestion',
+    patientText: 'Burping or belching', patientSub: 'Bringing up air to relieve pressure' },
+  { id: 'gsrs_gas', section: 'GI', cluster: 'Indigestion',
+    patientText: 'Passing gas / wind', patientSub: 'Needing to pass wind frequently' },
+
+  // ── GI core — Diarrhoea cluster ──
+  { id: 'gsrs_diarrhoea', section: 'GI', cluster: 'Diarrhoea',
+    patientText: 'Diarrhoea', patientSub: 'Passing stools more often than normal' },
+  { id: 'gsrs_loose', section: 'GI', cluster: 'Diarrhoea',
+    patientText: 'Loose or watery stools', patientSub: 'Soft, sloppy, or liquid stools' },
+  { id: 'gsrs_urgency', section: 'GI', cluster: 'Diarrhoea',
+    patientText: 'Urgency', patientSub: 'A sudden, urgent need to pass stool with little warning' },
+
+  // ── GI core — Constipation cluster ──
+  { id: 'gsrs_constip', section: 'GI', cluster: 'Constipation',
+    patientText: 'Constipation', patientSub: 'Passing stools less often than normal' },
+  { id: 'gsrs_hard', section: 'GI', cluster: 'Constipation',
+    patientText: 'Hard stools', patientSub: 'Hard stools that are difficult to pass' },
+  { id: 'gsrs_incomplete', section: 'GI', cluster: 'Constipation',
+    patientText: 'Incomplete emptying', patientSub: "A feeling your bowel isn't completely empty afterward" },
 ];
 
 // ── Derived index — the ONLY question index in the app. ─────────────────────
