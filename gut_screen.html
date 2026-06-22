@@ -301,9 +301,14 @@ const QUESTIONS = [
   // ── BG — Brain-gut & mood (DRAFT) ──
   { id: 'bg_brainfog', section: 'BG', patientText: 'Brain fog or poor concentration',
     patientSub: 'Difficulty thinking clearly, word-finding, mental fatigue' },
-  { id: 'bg_anxiety', section: 'BG', patientText: 'Anxiety or nervousness',
+  // Affective items: kept in the BG section for context but routed to the
+  // Psychological-load DRIVER (driverOnly) rather than the Index — they overlap
+  // heavily with PSS-4 (r ~ .5–.7) and were double-counting stress. See TRIM_PLAN.
+  { id: 'bg_anxiety', section: 'BG', driverOnly: true, driverGroup: 'psych',
+    patientText: 'Anxiety or nervousness',
     patientSub: 'Restlessness, racing thoughts, or unease' },
-  { id: 'bg_mood', section: 'BG', patientText: 'Low mood or loss of interest',
+  { id: 'bg_mood', section: 'BG', driverOnly: true, driverGroup: 'psych',
+    patientText: 'Low mood or loss of interest',
     patientSub: 'Persistent low mood or reduced enjoyment of things' },
   { id: 'bg_fatigue', section: 'BG', patientText: 'Fatigue not relieved by rest',
     patientSub: 'Ongoing tiredness or energy crashes, especially after meals' },
@@ -445,21 +450,101 @@ function painBand(s) {
     : s <= 6 ? { l: 'Moderate', c: '#BA7517' } : { l: 'Severe', c: '#A32D2D' };
 }
 
+// Composite PSYCHOLOGICAL LOAD (co-design): folds the validated PSS-4 together
+// with the two affective brain-gut items (anxiety, low mood) that were moved OUT
+// of the Index to stop double-counting stress. PSS-4 stays preserved and
+// reportable on its own (ex.pss4Score); this composite is what trends as the
+// driver. Weights provisional (PSS-4 0.5, anxiety 0.25, low mood 0.25) — see
+// TRIM_PLAN; recalibrate at pilot. Components renormalise over whatever's answered.
+function psychLoadScore(ex) {
+  const parts = [];
+  if (ex.pss4Score != null) parts.push([ex.pss4Score / 16, 0.5]);
+  if (ex.bgAnxiety  != null) parts.push([ex.bgAnxiety / 3,  0.25]);
+  if (ex.bgMood     != null) parts.push([ex.bgMood / 3,     0.25]);
+  if (!parts.length) return null;
+  const wsum = parts.reduce((a, [, w]) => a + w, 0);
+  return Math.round(parts.reduce((a, [x, w]) => a + x * w, 0) / wsum * 100); // 0–100
+}
+function loadBand(p) {
+  if (p == null) return null;
+  return p < 33 ? { l: 'Low', c: '#0F6E56' } : p < 66 ? { l: 'Moderate', c: '#BA7517' } : { l: 'High', c: '#A32D2D' };
+}
+
+// New modifiable drivers (co-design). All provisional, all kept OUT of the Index.
+// Recent gut disruptors — strongest modifiable microbiome influences.
+const DISRUPTORS = [
+  { id: 'abx',   label: 'Antibiotics' },
+  { id: 'ppi',   label: 'Acid blocker (PPI/H2)' },
+  { id: 'nsaid', label: 'Regular NSAID' },
+];
+const ALCOHOL_LEVELS  = ['None', 'Light', 'Moderate', 'Heavy'];        // 0–3
+const ACTIVITY_LEVELS = ['Sedentary', 'Light', 'Moderate', 'Active'];  // 0–3
+// Diet quality: protective fibre/fermented intake vs harmful ultra-processed/
+// sugar intake (each 0–3 frequency). Burden 0–1, higher = worse.
+function dietBurden(ex) {
+  const f = ex.dietFibre     != null ? (3 - ex.dietFibre) / 3 : null; // low fibre  = worse
+  const p = ex.dietProcessed != null ? ex.dietProcessed / 3   : null; // high processed = worse
+  const xs = [f, p].filter(x => x != null);
+  return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null;
+}
+function dietBand(b) {
+  if (b == null) return null;
+  return b < 0.34 ? { l: 'Good', c: '#0F6E56' } : b < 0.67 ? { l: 'Fair', c: '#BA7517' } : { l: 'Poor', c: '#A32D2D' };
+}
+
 // ONE shared driver descriptor used by every surface (results now; report later).
 function modifiableFactors(extras) {
   const ex = extras || {};
-  const ps = pss4Band(ex.pss4Score ?? null);
+  const plPct = psychLoadScore(ex);
+  const pl = loadBand(plPct);
   const pn = painBand(ex.nrsPain ?? null);
   const bt = ex.bristol != null ? BRISTOL_TYPES.find(t => t.n === ex.bristol) : null;
+  const db = dietBand(dietBurden(ex));
+  const disrupt = DISRUPTORS.filter(d => ex.meds && ex.meds[d.id]);
+  const alc = ex.alcohol  != null ? ALCOHOL_LEVELS[ex.alcohol]   : null;
+  const act = ex.activity != null ? ACTIVITY_LEVELS[ex.activity] : null;
   return [
-    { icon: '🧠', label: 'Stress (PSS-4)', band: ps ? ps.l : '—', score: ex.pss4Score != null ? `${ex.pss4Score}/16` : null, color: ps ? ps.c : '#999' },
+    { icon: '🧠', label: 'Psychological load', band: pl ? pl.l : '—',
+      score: plPct != null ? `${plPct}/100${ex.pss4Score != null ? ` · PSS-4 ${ex.pss4Score}/16` : ''}` : null,
+      color: pl ? pl.c : '#999' },
     { icon: '⚡', label: 'Pain (NRS)', band: pn ? pn.l : '—', score: ex.nrsPain != null ? `${ex.nrsPain}/10` : null, color: pn ? pn.c : '#999' },
     { icon: '💩', label: 'Bristol stool', band: bt ? `Type ${bt.n}` : '—', score: bt ? bt.tag : null, color: bt ? bt.col : '#999' },
+    { icon: '💊', label: 'Recent disruptors', band: disrupt.length ? `${disrupt.length} flagged` : (ex.meds ? 'None' : '—'),
+      score: disrupt.length ? disrupt.map(d => d.label).join(', ') : null, color: disrupt.length ? '#A32D2D' : (ex.meds ? '#0F6E56' : '#999') },
+    { icon: '🥗', label: 'Diet quality', band: db ? db.l : '—', score: null, color: db ? db.c : '#999' },
+    { icon: '🏃', label: 'Lifestyle', band: act || '—', score: alc != null ? `Alcohol: ${alc}` : null, color: act ? '#117A8B' : '#999' },
   ];
 }
 
 __e.SCALES = SCALES; __e.scaleFor = scaleFor; __e.RECALL_NOTE = RECALL_NOTE;
+// TRIM_PLAN — the de-dup decisions ("conceptual now, empirical at pilot").
+// Conceptual cuts applied NOW: the affective BG items left the Index (folded into
+// the Psychological-load driver). Everything else is FLAGGED, not cut — the pilot
+// makes the call. method[] is the empirical recipe to run once responses exist.
+const TRIM_PLAN = {
+  applied: [
+    { ids: ['bg_anxiety', 'bg_mood'], action: 'moved-to-driver:psych',
+      reason: 'Overlap with PSS-4 (r ~ .5–.7); were inflating the Index with stress variance.' },
+  ],
+  candidates: [
+    { id: 'bg_fatigue',  reason: 'May overlap residually with mood/stress; check item-total r vs GI core.' },
+    { id: 'me_cravings', reason: 'Diet-quality driver may now explain this; test redundancy.' },
+    { id: 'me_glucose',  reason: 'Overlaps me_cravings; candidate to merge.' },
+    { id: 'im_food_react', reason: 'May co-move with diet driver; verify added value to Index.' },
+  ],
+  // Drivers intentionally kept separate from the Index (modifiable, tracked):
+  drivers: ['psych(PSS-4+anxiety+mood)', 'pain(NRS)', 'bristol', 'disruptors(abx/ppi/nsaid)', 'diet(fibre/processed)', 'alcohol', 'activity'],
+  method: [
+    'Need ~100+ pilot responses before cutting any candidate.',
+    'Drop items with low corrected item-total correlation to the GI core.',
+    'Collapse item pairs with inter-item r > ~.75 (redundant).',
+    'Keep ≥1 item per screening domain for coverage even if weak.',
+  ],
+};
 __e.PSS4_ITEMS = PSS4_ITEMS; __e.PSS4_REVERSED = PSS4_REVERSED; __e.PSS4_ANCHORS = PSS4_ANCHORS; __e.pss4Score = pss4Score; __e.pss4Band = pss4Band;
+__e.psychLoadScore = psychLoadScore; __e.loadBand = loadBand;
+__e.DISRUPTORS = DISRUPTORS; __e.ALCOHOL_LEVELS = ALCOHOL_LEVELS; __e.ACTIVITY_LEVELS = ACTIVITY_LEVELS; __e.dietBurden = dietBurden; __e.dietBand = dietBand;
+__e.TRIM_PLAN = TRIM_PLAN;
 __e.BRISTOL_TYPES = BRISTOL_TYPES; __e.PAIN_REGIONS = PAIN_REGIONS; __e.painBand = painBand; __e.modifiableFactors = modifiableFactors;
 return __e;
 };
@@ -548,7 +633,7 @@ function computeScores(answers) {
   const coreNorms = [], screenNorms = [];
 
   for (const sec of SECTIONS) {
-    const qs = QUESTIONS.filter(q => q.section === sec.id);
+    const qs = QUESTIONS.filter(q => q.section === sec.id && !q.driverOnly);
     let sum = 0, n = 0, maxSum = 0, denom = 0;
     for (const q of qs) {
       const v = raw(q.id);
@@ -661,7 +746,8 @@ return __e;
    ========================================================================== */
 __modules['ui-patient.js'] = function(__e){
 const { SECTIONS, QUESTIONS, questionsOf, sectionMax, itemMax } = __req('schema.js');
-const { scaleFor, RECALL_NOTE, PSS4_ITEMS, PSS4_ANCHORS, pss4Score, BRISTOL_TYPES, PAIN_REGIONS, modifiableFactors } = __req('scales.js');
+const { scaleFor, RECALL_NOTE, PSS4_ITEMS, PSS4_ANCHORS, pss4Score, BRISTOL_TYPES, PAIN_REGIONS, modifiableFactors,
+        DISRUPTORS, ALCOHOL_LEVELS, ACTIVITY_LEVELS } = __req('scales.js');
 const { computeScores, scoreConfidence } = __req('scoring.js');
 const { RED_FLAGS, anyRedFlag, firedRedFlags, RED_FLAG_BANNER } = __req('redflags.js');
 const { el, esc, toast } = __req('util.js');
@@ -669,9 +755,14 @@ const { el, esc, toast } = __req('util.js');
 let answers = {};      // id -> value (absent = unanswered)
 let redflags = {};     // rf_id -> bool
 // Modifiable drivers — stored on the visit (extras), kept OUT of the Index.
-let extras = { bristol: null, pss4: [null, null, null, null], nrsPain: null, painRegion: null };
+const blankExtras = () => ({
+  bristol: null, pss4: [null, null, null, null], nrsPain: null, painRegion: null,
+  meds: { abx: false, ppi: false, nsaid: false },
+  dietFibre: null, dietProcessed: null, alcohol: null, activity: null,
+});
+let extras = blankExtras();
 
-function reset() { answers = {}; redflags = {}; extras = { bristol: null, pss4: [null, null, null, null], nrsPain: null, painRegion: null }; }
+function reset() { answers = {}; redflags = {}; extras = blankExtras(); }
 
 function render() {
   const root = document.getElementById('mode-patient');
@@ -704,6 +795,8 @@ function render() {
   root.appendChild(bristolCard());
   root.appendChild(pss4Card());
   root.appendChild(painCard());
+  root.appendChild(medsCard());
+  root.appendChild(lifestyleCard());
 
   const actions = el('div', { class: 'card row', style: 'justify-content:flex-end' });
   actions.appendChild(el('button', { class: 'btn btn-g', onclick: calc }, 'See results →'));
@@ -774,6 +867,51 @@ function painCard() {
     chips.appendChild(b);
   });
   regWrap.appendChild(chips); body.appendChild(regWrap); card.appendChild(body);
+  return card;
+}
+
+// Recent gut disruptors — multi-select toggles. Strong modifiable microbiome
+// influences (and they explain regressions between visits). Not part of the score.
+function medsCard() {
+  const card = el('div', { class: 'sec-card' });
+  card.appendChild(el('div', { class: 'sec-head', style: 'background:#7A6A1E' }, 'Recent medications (last 3 months)'));
+  const body = el('div', { class: 'sec-body' });
+  body.appendChild(el('div', { class: 'q-sub', style: 'padding-top:8px' }, 'Tap any you have taken recently. Not part of the score.'));
+  const chips = el('div', { class: 'chips' });
+  DISRUPTORS.forEach(d => {
+    const b = el('button', { class: `chip-opt${extras.meds[d.id] ? ' sel' : ''}`, type: 'button' }, esc(d.label));
+    b.onclick = () => { extras.meds[d.id] = !extras.meds[d.id]; b.classList.toggle('sel'); };
+    chips.appendChild(b);
+  });
+  body.appendChild(chips); card.appendChild(body);
+  return card;
+}
+
+// Generic 0–3 segmented row used by the diet/lifestyle drivers.
+function segRow(label, levels, getter, setter) {
+  const row = el('div', { class: 'q' });
+  row.appendChild(el('div', { class: 'q-txt', style: 'font-weight:500' }, esc(label)));
+  const opts = el('div', { class: 'opts', style: 'flex-wrap:nowrap;gap:4px' });
+  levels.forEach((lab, v) => {
+    const b = el('button', { class: `opt${getter() === v ? ' sel' : ''}`, type: 'button', style: 'min-width:0;flex:1;font-size:11px;padding:6px 4px' }, esc(lab));
+    b.onclick = () => { setter(v); opts.querySelectorAll('.opt').forEach(o => o.classList.remove('sel')); b.classList.add('sel'); };
+    opts.appendChild(b);
+  });
+  row.appendChild(opts);
+  return row;
+}
+
+function lifestyleCard() {
+  const FREQ = ['Rarely', 'Some days', 'Most days', 'Daily'];
+  const card = el('div', { class: 'sec-card' });
+  card.appendChild(el('div', { class: 'sec-head', style: 'background:#117A8B' }, 'Diet & lifestyle'));
+  const body = el('div', { class: 'sec-body' });
+  body.appendChild(el('div', { class: 'q-sub', style: 'padding-top:8px' }, 'Modifiable habits we track over time — not part of the score.'));
+  body.appendChild(segRow('Plants, fibre & fermented foods',        FREQ,            () => extras.dietFibre,     v => extras.dietFibre = v));
+  body.appendChild(segRow('Ultra-processed or sugary foods/drinks', FREQ,            () => extras.dietProcessed, v => extras.dietProcessed = v));
+  body.appendChild(segRow('Alcohol',                                ALCOHOL_LEVELS,  () => extras.alcohol,       v => extras.alcohol = v));
+  body.appendChild(segRow('Physical activity',                      ACTIVITY_LEVELS, () => extras.activity,      v => extras.activity = v));
+  card.appendChild(body);
   return card;
 }
 
@@ -877,7 +1015,12 @@ function calc() {
   // Modifiable drivers — context, not part of the Index. Stored in `extras` and
   // designed to feed the deferred pattern/strain engines.
   const ps = pss4Score(extras.pss4);
-  const driverExtras = { pss4Score: ps, nrsPain: extras.nrsPain, bristol: extras.bristol };
+  const driverExtras = {
+    pss4Score: ps, nrsPain: extras.nrsPain, bristol: extras.bristol,
+    bgAnxiety: answers.bg_anxiety, bgMood: answers.bg_mood,   // folded into psych load
+    meds: extras.meds, dietFibre: extras.dietFibre, dietProcessed: extras.dietProcessed,
+    alcohol: extras.alcohol, activity: extras.activity,
+  };
   const driv = el('div', { class: 'card' });
   driv.appendChild(el('h2', {}, 'Modifiable drivers'));
   driv.appendChild(el('div', { class: 'q-sub' }, 'Shown for context — not added to the Dysbiosis Index. These feed pattern & strain guidance.'));
