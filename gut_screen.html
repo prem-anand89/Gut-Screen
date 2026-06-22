@@ -301,13 +301,16 @@ const QUESTIONS = [
   // ── BG — Brain-gut & mood (DRAFT) ──
   { id: 'bg_brainfog', section: 'BG', patientText: 'Brain fog or poor concentration',
     patientSub: 'Difficulty thinking clearly, word-finding, mental fatigue' },
-  // Affective items: kept in the BG section for context but routed to the
-  // Psychological-load DRIVER (driverOnly) rather than the Index — they overlap
-  // heavily with PSS-4 (r ~ .5–.7) and were double-counting stress. See TRIM_PLAN.
-  { id: 'bg_anxiety', section: 'BG', driverOnly: true, driverGroup: 'psych',
+  // Affective items are DUAL-ROLE (like Bristol): scored in the BG *screen* of
+  // the Index AND folded into the Psychological-load driver. `driverGroup` marks
+  // the driver membership; they are NOT driverOnly, so they count toward the
+  // Index. They land in a screen (never core), so the GI-dominance cap stops
+  // affective symptoms alone from inflating the band. PSS-4 stays driver-only
+  // (a modifiable cause, not a symptom). See TRIM_PLAN.
+  { id: 'bg_anxiety', section: 'BG', driverGroup: 'psych',
     patientText: 'Anxiety or nervousness',
     patientSub: 'Restlessness, racing thoughts, or unease' },
-  { id: 'bg_mood', section: 'BG', driverOnly: true, driverGroup: 'psych',
+  { id: 'bg_mood', section: 'BG', driverGroup: 'psych',
     patientText: 'Low mood or loss of interest',
     patientSub: 'Persistent low mood or reduced enjoyment of things' },
   { id: 'bg_fatigue', section: 'BG', patientText: 'Fatigue not relieved by rest',
@@ -523,8 +526,8 @@ __e.SCALES = SCALES; __e.scaleFor = scaleFor; __e.RECALL_NOTE = RECALL_NOTE;
 // makes the call. method[] is the empirical recipe to run once responses exist.
 const TRIM_PLAN = {
   applied: [
-    { ids: ['bg_anxiety', 'bg_mood'], action: 'moved-to-driver:psych',
-      reason: 'Overlap with PSS-4 (r ~ .5–.7); were inflating the Index with stress variance.' },
+    { ids: ['bg_anxiety', 'bg_mood'], action: 'dual-role:BG-screen + driver:psych',
+      reason: 'Scored in the BG screen (capped, never core) AND folded into the Psychological-load driver. Not double-counting: PSS-4 — the correlated stress measure — is driver-only and never in the Index.' },
   ],
   candidates: [
     { id: 'bg_fatigue',  reason: 'May overlap residually with mood/stress; check item-total r vs GI core.' },
