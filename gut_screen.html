@@ -64,6 +64,10 @@ h1{font-size:22px}h2{font-size:17px;margin-bottom:8px}h3{font-size:14px}
 .chips{display:flex;gap:7px;flex-wrap:wrap}
 .chip-opt{border:1.5px solid var(--bdr);background:var(--surf);border-radius:20px;padding:7px 14px;font-size:12px;font-weight:600;color:var(--inks)}
 .chip-opt.sel{border-color:var(--g);background:var(--gp);color:var(--g)}
+.opt-tag{display:inline-block;font-size:9px;font-weight:700;color:var(--bl);background:var(--blp);border-radius:9px;padding:1px 7px;margin-left:4px;text-transform:uppercase;letter-spacing:.03em;vertical-align:middle}
+.na-wrap{margin-top:6px}
+.na-opt{font-size:11px;padding:5px 12px}
+.na-opt.sel{border-color:var(--inkt);background:#ECEAE4;color:var(--inks)}
 
 .hero{display:flex;align-items:center;gap:20px;background:var(--gf);border:1px solid var(--gl);border-radius:var(--r12);padding:18px;flex-wrap:wrap}
 .hero .big{font-size:42px;font-weight:800;line-height:.95;color:var(--g)}
@@ -355,28 +359,36 @@ function bandForPct(pct, coreLow) {
   return Object.assign({}, b, { capped: false });
 }
 
-// answers: id-map OR positional array; unanswered = null/undefined (NOT 0).
+// answers: id-map OR positional array. Per item:
+//   number (0..N) = answered · null/undefined = unanswered · 'na' = not applicable.
+// Optional items (q.optional / sex-age-specific) excluded from the completeness
+// denominator unless actually answered, and 'na' items are excluded from the
+// score AND the denominator entirely — so skipping items that don't apply to
+// you never makes the result read as incomplete (the gender/age requirement).
 function computeScores(answers) {
   const raw = Array.isArray(answers) ? (id) => answers[QID[id]] : (id) => answers[id];
-  const answered = (v) => v != null;
 
-  const secScores = {}, secNorm = {}, bands = {}, secAnswered = {};
+  const secScores = {}, secNorm = {}, bands = {}, secAnswered = {}, secApplicableMax = {};
   let answeredItems = 0, scoredItems = 0;
   const coreNorms = [], screenNorms = [];
 
   for (const sec of SECTIONS) {
     const qs = QUESTIONS.filter(q => q.section === sec.id);
-    let sum = 0, n = 0, maxSum = 0;
+    let sum = 0, n = 0, maxSum = 0, denom = 0;
     for (const q of qs) {
       const v = raw(q.id);
-      if (answered(v)) { sum += v; n++; maxSum += itemMax(q); }
+      if (v === 'na') continue;                 // not applicable — excluded from score + completeness
+      const hasVal = typeof v === 'number';
+      if (hasVal) { sum += v; n++; maxSum += itemMax(q); denom++; }
+      else if (!q.optional) { denom++; }        // mandatory blank counts against completeness; optional blank doesn't
     }
     secScores[sec.id] = sum;
+    secApplicableMax[sec.id] = maxSum;
     secAnswered[sec.id] = { answered: n, of: qs.length };
-    bands[sec.id] = sectionMax(sec.id) ? Math.min(3, Math.floor(sum / sectionMax(sec.id) * 4)) : 0;
-    const norm = maxSum > 0 ? sum / maxSum : null; // domain MEAN, 0–1
+    bands[sec.id] = maxSum ? Math.min(3, Math.floor(sum / maxSum * 4)) : 0;
+    const norm = maxSum > 0 ? sum / maxSum : null; // domain MEAN over APPLICABLE items, 0–1
     secNorm[sec.id] = norm;
-    scoredItems += qs.length; answeredItems += n;
+    scoredItems += denom; answeredItems += n;
     if (norm != null) (sec.role === 'core' ? coreNorms : screenNorms).push(norm);
   }
 
@@ -398,7 +410,7 @@ function computeScores(answers) {
       : ''),
   });
 
-  return { secScores, secNorm, bands, secAnswered, completeness, index, severity };
+  return { secScores, secNorm, secApplicableMax, bands, secAnswered, completeness, index, severity };
 }
 
 // Shared confidence descriptor (Phase 0.5 §3 mechanism).
@@ -543,16 +555,33 @@ function redFlagCard() {
 function questionRow(q) {
   const labels = scaleFor(q.scale);
   const row = el('div', { class: 'q' });
-  row.appendChild(el('div', { class: 'q-txt' }, esc(q.patientText)));
+  const tag = q.optional ? ` <span class="opt-tag">${esc(q.optionalLabel || 'optional')}</span>` : '';
+  row.appendChild(el('div', { class: 'q-txt' }, esc(q.patientText) + tag));
   if (q.patientSub) row.appendChild(el('div', { class: 'q-sub' }, esc(q.patientSub)));
   const opts = el('div', { class: 'opts' });
+  const naBtn = q.optional ? el('button', { class: `chip-opt na-opt${answers[q.id] === 'na' ? ' sel' : ''}`, type: 'button' }, 'Not applicable') : null;
   labels.forEach((lab, v) => {
     const sel = answers[q.id] === v ? ' sel' : '';
     const b = el('button', { class: `opt s${v}${sel}`, type: 'button' }, `<span class="on">${v}</span>${esc(lab)}`);
-    b.onclick = () => { answers[q.id] = v; opts.querySelectorAll('.opt').forEach(o => o.classList.remove('sel')); b.classList.add('sel'); };
+    b.onclick = () => {
+      answers[q.id] = v;
+      opts.querySelectorAll('.opt').forEach(o => o.classList.remove('sel'));
+      b.classList.add('sel');
+      if (naBtn) naBtn.classList.remove('sel');
+    };
     opts.appendChild(b);
   });
   row.appendChild(opts);
+  if (naBtn) {
+    naBtn.onclick = () => {
+      answers[q.id] = 'na';
+      opts.querySelectorAll('.opt').forEach(o => o.classList.remove('sel'));
+      naBtn.classList.add('sel');
+    };
+    const naWrap = el('div', { class: 'na-wrap' });
+    naWrap.appendChild(naBtn);
+    row.appendChild(naWrap);
+  }
   return row;
 }
 
@@ -586,9 +615,12 @@ function calc() {
   const bars = el('div', { class: 'card' });
   bars.appendChild(el('h2', {}, 'By domain'));
   SECTIONS.forEach(s => {
-    const sc = score.secScores[s.id] || 0; const max = sectionMax(s.id); const p = max ? Math.round(sc / max * 100) : 0;
+    const sc = score.secScores[s.id] || 0;
+    const max = score.secApplicableMax[s.id] || 0; // applicable max (excludes N/A items)
+    const p = max ? Math.round(sc / max * 100) : 0;
+    const maxLabel = max ? `${sc}/${max} · ${p}%` : 'n/a';
     bars.appendChild(el('div', { class: 'bar-row' },
-      `<div class="bar-label"><span>${esc(s.full || s.label)}</span><span class="muted">${sc}/${max} · ${p}%</span></div>
+      `<div class="bar-label"><span>${esc(s.full || s.label)}</span><span class="muted">${maxLabel}</span></div>
        <div class="bar-track"><div class="bar-fill" style="width:${p}%;background:${s.color || '#0F6E56'}"></div></div>`));
   });
   out.appendChild(bars);
