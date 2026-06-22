@@ -507,12 +507,14 @@ return __e;
 __modules['scoring.js'] = function(__e){
 const { SECTIONS, QUESTIONS, QID, itemMax, sectionMax } = __req('schema.js');
 
-// Provisional bands on the 0–100 Index. Recalibrate against pilot data.
-// TODO[recalibration]: cutoffs are placeholders until the model + data exist.
+// Provisional bands on the 0–100 Index. Co-design: stricter 20/40/60 cutoffs.
+// TODO[recalibration, opened 2026-06]: cutoffs AND the 0.6/0.4 core/screen
+// weighting are provisional placeholders — refit against pilot distribution +
+// any lab-confirmed outcomes (breath test, GI-MAP) before treating as final.
 const BANDS = [
-  { label: 'Minimal',       maxPct: 25,        color: '#0F6E56', bg: '#E1F5EE', cls: 'sev-min' },
-  { label: 'Mild–Moderate', maxPct: 50,        color: '#BA7517', bg: '#FAEEDA', cls: 'sev-mod' },
-  { label: 'Significant',   maxPct: 70,        color: '#C2622E', bg: '#FAECE7', cls: 'sev-sig' },
+  { label: 'Minimal',       maxPct: 20,        color: '#0F6E56', bg: '#E1F5EE', cls: 'sev-min' },
+  { label: 'Mild–Moderate', maxPct: 40,        color: '#BA7517', bg: '#FAEEDA', cls: 'sev-mod' },
+  { label: 'Significant',   maxPct: 60,        color: '#C2622E', bg: '#FAECE7', cls: 'sev-sig' },
   { label: 'Severe',        maxPct: Infinity,  color: '#A32D2D', bg: '#FCEBEB', cls: 'sev-sev' },
 ];
 const SEVERITY_DESC = {
@@ -565,11 +567,11 @@ function computeScores(answers) {
     if (norm != null) (sec.role === 'core' ? coreNorms : screenNorms).push(norm);
   }
 
-  // Hybrid combine (provisional): core weighted 0.7, screens 0.3.
+  // Hybrid combine (co-design): core weighted 0.6, screens 0.4 (more holistic).
   const coreMean = coreNorms.length ? coreNorms.reduce((a, b) => a + b, 0) / coreNorms.length : null;
   const screenMean = screenNorms.length ? screenNorms.reduce((a, b) => a + b, 0) / screenNorms.length : null;
   let blend;
-  if (coreMean != null && screenMean != null) blend = 0.7 * coreMean + 0.3 * screenMean;
+  if (coreMean != null && screenMean != null) blend = 0.6 * coreMean + 0.4 * screenMean;
   else blend = (coreMean != null ? coreMean : (screenMean != null ? screenMean : 0));
   const index = Math.round(blend * 100);
 
