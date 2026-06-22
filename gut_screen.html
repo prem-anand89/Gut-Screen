@@ -706,16 +706,19 @@ function computeScores(answers, opts) {
   const index = Math.round(blend * 100);
 
   const completeness = scoredItems ? Math.round(answeredItems / scoredItems * 100) : 100;
-  const coreLow = coreMean != null && coreMean < 0.20; // low direct GI burden
+  const coreUnknown = coreMean == null;                 // GI/GSRS section wasn't answered at all
+  const coreLow = coreUnknown || coreMean < 0.20;        // unknown OR genuinely low — cap either way
   const band = bandForPct(index, coreLow);
   const severity = Object.assign({}, band, {
     index,
     desc: SEVERITY_DESC[band.label] + (band.capped
-      ? ' Capped — direct gut symptoms are low; the elevation comes mostly from other domains.'
+      ? (coreUnknown
+          ? ' Capped — the core GI section wasn’t answered, so this result can’t yet be attributed to direct gut symptoms.'
+          : ' Capped — direct gut symptoms are low; the elevation comes mostly from other domains.')
       : ''),
   });
 
-  return { secScores, secNorm, secApplicableMax, bands, secAnswered, completeness, index, severity, bristolSignal, clusterAgg, clusterNorm };
+  return { secScores, secNorm, secApplicableMax, bands, secAnswered, completeness, index, severity, bristolSignal, clusterAgg, clusterNorm, coreUnknown };
 }
 
 // Shared confidence descriptor (Phase 0.5 §3 mechanism).
@@ -956,8 +959,13 @@ function loadDB() {
 }
 function saveDB(db) {
   db.meta = db.meta || {}; db.meta.schemaVersion = SCHEMA_VERSION;
-  try { localStorage.setItem(KEY, JSON.stringify(db)); } catch (e) { console.warn('[gutscreen] save failed', e); }
-  return db;
+  try {
+    localStorage.setItem(KEY, JSON.stringify(db));
+    return db;
+  } catch (e) {
+    console.warn('[gutscreen] save failed', e);
+    return null; // signal failure to the caller instead of pretending success
+  }
 }
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 function normalise(db) {
@@ -1092,7 +1100,8 @@ function saveVisit() {
     redflags: { ...redflags },
   };
   db.patients.push({ id: Store.uid(), visits: [visit] });
-  Store.saveDB(db);
+  const saved = Store.saveDB(db);
+  if (!saved) throw new Error('Storage write failed — response was not saved.');
   return visit.id;
 }
 
