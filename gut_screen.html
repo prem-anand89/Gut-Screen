@@ -121,6 +121,9 @@ h1{font-size:22px}h2{font-size:17px;margin-bottom:8px}h3{font-size:14px}
 .mode-btn{border:none;background:transparent;color:rgba(255,255,255,.78);font-size:12px;font-weight:600;padding:6px 14px;border-radius:18px;transition:all .15s;white-space:nowrap;cursor:pointer}
 .mode-btn.active{background:#fff;color:var(--g)}
 .mode{display:none}.mode.show{display:block}
+.app-chip{display:flex;align-items:center;gap:7px;background:rgba(255,255,255,.13);border-radius:20px;padding:4px 6px 4px 12px;font-size:12px;font-weight:600;color:#fff;max-width:240px}
+.app-chip .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.app-chip .x{background:rgba(255,255,255,.2);border:none;color:#fff;width:18px;height:18px;border-radius:50%;font-size:11px;line-height:1;flex-shrink:0;cursor:pointer}
 /* patient records */
 .db-search{flex:1;min-width:180px;padding:9px 13px;border:1px solid var(--bdr);border-radius:var(--r8);font-size:14px;background:var(--surf)}
 .db-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
@@ -152,7 +155,7 @@ h1{font-size:22px}h2{font-size:17px;margin-bottom:8px}h3{font-size:14px}
     <button class="mode-btn active" data-mode="patient" type="button">Questionnaire</button>
     <button class="mode-btn" data-mode="record" type="button">Patient records</button>
   </div>
-  <div class="app-tag" id="buildTag">co-design build</div>
+  <div class="app-chip" id="activeChip" style="display:none"><span class="nm" id="activeName"></span><button class="x" id="activeClear" type="button" title="Clear patient">✕</button></div>
 </header>
 <main>
   <section id="mode-patient" class="mode show wrap"></section>
@@ -516,6 +519,26 @@ const STOOLVAR_LEVELS = ['Never', 'Sometimes', 'Often'];      // 0–2
 const POSTINF_OPTS   = ['No', 'Yes', 'Not sure'];             // 0/1/2 (1 = Yes)
 const PARADOX_OPTS   = ['No', 'Yes', "Haven't tried"];        // 0/1/2 (1 = Yes)
 
+// Surgical history (asked routinely for visceral / fascial manipulation). Two
+// orthogonal relevances: `adhesion` surgeries → manual-therapy candidacy (Tier 2);
+// `microbiome` surgeries (cholecystectomy, resection, bariatric) → a dysbiosis-
+// correlate signal. Stored per-visit in extras.surgeries (id list).
+const SURGERIES = [
+  { id: 'abdominal',   label: 'Abdominal surgery',            adhesion: true },
+  { id: 'pelvic',      label: 'Pelvic surgery / C-section',   adhesion: true },
+  { id: 'hernia',      label: 'Hernia repair',                adhesion: true },
+  { id: 'bowel',       label: 'Bowel resection',              adhesion: true, microbiome: true },
+  { id: 'gallbladder', label: 'Gallbladder removal',          microbiome: true },
+  { id: 'appendix',    label: 'Appendix removal',             microbiome: true },
+  { id: 'bariatric',   label: 'Weight-loss (bariatric) surgery', microbiome: true },
+];
+function surgicalFlags(extras) {
+  const ids = new Set(((extras || {}).surgeries) || []);
+  let adhesion = false, microbiome = false; const list = [];
+  SURGERIES.forEach(s => { if (ids.has(s.id)) { list.push(s.label); if (s.adhesion) adhesion = true; if (s.microbiome) microbiome = true; } });
+  return { adhesion, microbiome, list, count: list.length };
+}
+
 // Returns the count of dysbiosis-correlate signals present + their labels.
 function dysbiosisLens(extras) {
   const ex = extras || {}, d = ex.dys || {};
@@ -527,6 +550,7 @@ function dysbiosisLens(extras) {
   if (typeof d.gasFoul === 'number' && d.gasFoul >= 2) signals.push({ k: 'gas', label: 'Foul / excessive gas' });
   if (d.fibreParadox === 1) signals.push({ k: 'paradox', label: 'Worse with fibre / probiotics' });
   if (typeof d.stoolVar === 'number' && d.stoolVar >= 1) signals.push({ k: 'var', label: 'Day-to-day stool variability' });
+  if (surgicalFlags(ex).microbiome) signals.push({ k: 'surg', label: 'Microbiome-altering surgery' });
   return { count: signals.length, signals };
 }
 
@@ -555,6 +579,7 @@ function modifiableFactors(extras) {
   const alc = ex.alcohol  != null ? ALCOHOL_LEVELS[ex.alcohol]   : null;
   const act = ex.activity != null ? ACTIVITY_LEVELS[ex.activity] : null;
   const sb = sleepBand(sleepBurden(ex.sleep));
+  const surg = surgicalFlags(ex);
   return [
     { icon: '🧠', label: 'Psychological load', band: pl ? pl.l : '—',
       score: plPct != null ? `${plPct}/100${ex.pss4Score != null ? ` · PSS-4 ${ex.pss4Score}/16` : ''}` : null,
@@ -566,6 +591,8 @@ function modifiableFactors(extras) {
     { icon: '🥗', label: 'Diet quality', band: db ? db.l : '—', score: null, color: db ? db.c : '#999' },
     { icon: '🏃', label: 'Lifestyle', band: act || '—', score: alc != null ? `Alcohol: ${alc}` : null, color: act ? '#117A8B' : '#999' },
     { icon: '😴', label: 'Sleep', band: sb ? sb.l : '—', score: null, color: sb ? sb.c : '#999' },
+    { icon: '🔪', label: 'Surgical history', band: surg.count ? `${surg.count} noted` : 'None noted',
+      score: surg.count ? surg.list.join(', ') : null, color: surg.count ? '#185FA5' : '#999' },
   ];
 }
 
@@ -612,6 +639,7 @@ __e.DISRUPTORS = DISRUPTORS; __e.ALCOHOL_LEVELS = ALCOHOL_LEVELS; __e.ACTIVITY_L
 __e.SLEEP_ITEMS = SLEEP_ITEMS; __e.SLEEP_ANCHORS = SLEEP_ANCHORS; __e.sleepBurden = sleepBurden; __e.sleepBand = sleepBand;
 __e.FOOD_TRIGGERS = FOOD_TRIGGERS; __e.ABX_COURSES = ABX_COURSES; __e.GAS_LEVELS = GAS_LEVELS; __e.STOOLVAR_LEVELS = STOOLVAR_LEVELS;
 __e.POSTINF_OPTS = POSTINF_OPTS; __e.PARADOX_OPTS = PARADOX_OPTS; __e.dysbiosisLens = dysbiosisLens;
+__e.SURGERIES = SURGERIES; __e.surgicalFlags = surgicalFlags;
 __e.gutHealthIndex = gutHealthIndex; __e.GHI_WEIGHTS = GHI_WEIGHTS;
 __e.TRIM_PLAN = TRIM_PLAN;
 __e.BRISTOL_TYPES = BRISTOL_TYPES; __e.PAIN_REGIONS = PAIN_REGIONS; __e.painBand = painBand; __e.modifiableFactors = modifiableFactors;
@@ -1036,12 +1064,13 @@ const TIERS = {
 };
 
 // score: computeScores() output · patterns: detectPatterns() output · firedFlags: array
-function triage(score, patterns, firedFlags, dys) {
+function triage(score, patterns, firedFlags, dys, opts) {
   const pids = new Set((patterns || []).map(p => p.id));
   const band = (score && score.severity) ? score.severity.label : null;
   const capped = !!(score && score.severity && score.severity.capped);
   const pain = (score && score.clusterNorm) ? score.clusterNorm.Pain : null;
   const flags = firedFlags || [];
+  const o = opts || {};
   const dysCount = (dys && typeof dys.count === 'number') ? dys.count : 0;
   const has = (id) => pids.has(id);
   const candidacy = { 1: [], 2: [], 3: [], 4: [] };
@@ -1057,6 +1086,7 @@ function triage(score, patterns, firedFlags, dys) {
   if (has('mixed_bowel')) candidacy[2].push('Mixed / alternating bowel pattern');
   if (has('reflux_upper_gi')) candidacy[2].push('Reflux / upper-GI pattern');
   if (pain != null && pain >= 0.5) candidacy[2].push('Prominent abdominal-pain cluster');
+  if (o.adhesionSurgery) candidacy[2].push('Prior abdominal/pelvic surgery (adhesions — visceral / fascial manual-therapy candidacy)');
 
   // Tier 3 — microbiome-support candidacy
   if (has('post_disruptor')) candidacy[3].push('Recent gut-disruptor exposure (strongest probiotic-trial rationale)');
@@ -1217,7 +1247,7 @@ __e.blankDB = blankDB; __e.loadDB = loadDB; __e.saveDB = saveDB; __e.uid = uid; 
 function pilotExportCSV(db) {
   const { SECTIONS, QUESTIONS } = __req('schema.js');
   const { computeScores } = __req('scoring.js');
-  const { pss4Score, psychLoadScore, dietBurden, sleepBurden, dysbiosisLens } = __req('scales.js');
+  const { pss4Score, psychLoadScore, dietBurden, sleepBurden, dysbiosisLens, surgicalFlags } = __req('scales.js');
   const { PATTERNS, detectPatterns } = __req('patterns.js');
   const d = normalise(db);
 
@@ -1238,6 +1268,7 @@ function pilotExportCSV(db) {
     'ex_dietFibre', 'ex_dietProcessed', 'ex_dietBurden', 'ex_alcohol', 'ex_activity',
     'ex_sleep_1', 'ex_sleep_2', 'ex_sleep_3', 'ex_sleep_4', 'ex_sleepBurden',
     'ex_abxCourses', 'ex_dys_stoolVar', 'ex_dys_postInfectious', 'ex_dys_gasFoul', 'ex_dys_fibreParadox', 'ex_dys_foodTriggers', 'ex_dysLensCount',
+    'ex_surgeryCount',
     ...PATTERNS.map(p => 'pat_' + p.id),
   ];
   const rows = [header];
@@ -1262,6 +1293,7 @@ function pilotExportCSV(db) {
         cell(ex.dietFibre), cell(ex.dietProcessed), num(dietBurden(drv)), cell(ex.alcohol), cell(ex.activity),
         cell((ex.sleep || [])[0]), cell((ex.sleep || [])[1]), cell((ex.sleep || [])[2]), cell((ex.sleep || [])[3]), num(sleepBurden(ex.sleep)),
         cell(ex.abxCourses), cell((ex.dys || {}).stoolVar), cell((ex.dys || {}).postInfectious), cell((ex.dys || {}).gasFoul), cell((ex.dys || {}).fibreParadox), cell(((ex.dys || {}).foodTriggers || []).length), cell(dysbiosisLens(ex).count),
+        cell(surgicalFlags(ex).count),
         ...PATTERNS.map(p => fired.has(p.id) ? 1 : 0),
       ]);
     });
@@ -1281,7 +1313,8 @@ __modules['ui-patient.js'] = function(__e){
 const { SECTIONS, QUESTIONS, questionsOf, sectionMax, itemMax } = __req('schema.js');
 const { scaleFor, RECALL_NOTE, PSS4_ITEMS, PSS4_ANCHORS, pss4Score, BRISTOL_TYPES, PAIN_REGIONS, modifiableFactors,
         DISRUPTORS, ALCOHOL_LEVELS, ACTIVITY_LEVELS, SLEEP_ITEMS, SLEEP_ANCHORS,
-        FOOD_TRIGGERS, ABX_COURSES, GAS_LEVELS, STOOLVAR_LEVELS, POSTINF_OPTS, PARADOX_OPTS, dysbiosisLens, gutHealthIndex } = __req('scales.js');
+        FOOD_TRIGGERS, ABX_COURSES, GAS_LEVELS, STOOLVAR_LEVELS, POSTINF_OPTS, PARADOX_OPTS, dysbiosisLens, gutHealthIndex,
+        SURGERIES, surgicalFlags } = __req('scales.js');
 const { computeScores, scoreConfidence } = __req('scoring.js');
 const { RED_FLAGS, anyRedFlag, firedRedFlags, RED_FLAG_BANNER } = __req('redflags.js');
 const { el, esc, toast } = __req('util.js');
@@ -1300,15 +1333,27 @@ const blankExtras = () => ({
   sleep: [null, null, null, null],   // relocated from a scored domain to a driver
   abxCourses: null,                  // Dys-R: antibiotic dose /12mo
   dys: { stoolVar: null, postInfectious: null, gasFoul: null, fibreParadox: null, foodTriggers: [] },
+  surgeries: [],                     // surgical history (id list) — VM/fascial + microbiome
 });
 let extras = blankExtras();
-// Session: a clinician-assigned patient reference (de-identified — a code, not a
-// name) + whether this is a follow-up. Drives visit linking, the recall window,
-// and the longitudinal trend view. `ref` persists across reset() so a clinician
-// can run baseline then follow-up in one sitting without retyping.
-let session = { ref: '', followup: false };
+// Session: the patient identity (name / age / gender + optional reference code)
+// and whether this is a follow-up. Identity persists across reset() so a
+// clinician can run baseline then follow-up in one sitting; the header chip's ✕
+// clears it. NOTE: with a name entered this record holds PII — it stays in this
+// browser's local storage only (never transmitted).
+let session = { name: '', age: '', gender: '', ref: '', followup: false };
 
 function reset() { answers = {}; redflags = {}; extras = blankExtras(); session.followup = false; }
+
+// The patient's linking key: reference code if given, else name (so name-only
+// clinicians still get visit linking + trends).
+function findPatient(db) {
+  const ref = (session.ref || '').trim();
+  if (ref) return Store.patientByRef(db, ref);
+  const name = (session.name || '').trim().toLowerCase();
+  if (!name) return null;
+  return (db.patients || []).find(p => !p.ref && (p.name || '').trim().toLowerCase() === name) || null;
+}
 
 // Save the current visit to localStorage. If a patient reference is set, the
 // visit is appended to that patient (so follow-ups accumulate and the trend
@@ -1327,11 +1372,9 @@ function currentVisit() {
   };
 }
 
-// Prior saved visits for the current patient reference (empty if none / no ref).
+// Prior saved visits for the current patient (by ref or name; empty if none).
 function priorVisits() {
-  const ref = (session.ref || '').trim();
-  if (!ref) return [];
-  const p = Store.patientByRef(Store.loadDB(), ref);
+  const p = findPatient(Store.loadDB());
   return (p && p.visits) ? p.visits.slice() : [];
 }
 
@@ -1339,7 +1382,8 @@ function saveVisit() {
   const db = Store.loadDB();
   const visit = currentVisit();
   const ref = (session.ref || '').trim();
-  let patient = ref ? Store.patientByRef(db, ref) : null;
+  const name = (session.name || '').trim();
+  let patient = findPatient(db);
   if (patient) {
     patient.visits = patient.visits || [];
     patient.visits.push(visit);
@@ -1347,9 +1391,14 @@ function saveVisit() {
     patient = { id: Store.uid(), ref: ref || null, visits: [visit] };
     db.patients.push(patient);
   }
+  // Keep the identity fields current (latest entry wins).
+  patient.name = name || patient.name || '';
+  patient.age = (session.age || '').trim() || patient.age || '';
+  patient.gender = session.gender || patient.gender || '';
+  if (ref) patient.ref = ref;
   const saved = Store.saveDB(db);
   if (!saved) throw new Error('Storage write failed — response was not saved.');
-  return { id: visit.id, visits: patient.visits.slice(), linked: !!ref };
+  return { id: visit.id, visits: patient.visits.slice(), linked: !!(ref || name) };
 }
 
 // Recall window narrows on follow-ups so the screen is sensitive to recent change.
@@ -1359,19 +1408,55 @@ function recallNote() {
     : RECALL_NOTE;
 }
 
-// Session card: de-identified patient reference + follow-up toggle. Optional —
-// leaving the reference blank saves a standalone anonymous visit as before.
+// Header active-patient chip — reflects the current identity (name or reference).
+function identityLabel() { return (session.name || '').trim() || (session.ref || '').trim() || ''; }
+function updateIdentityChip() {
+  const chip = document.getElementById('activeChip');
+  if (!chip) return;
+  const lbl = identityLabel();
+  if (lbl) { chip.style.display = 'flex'; const n = document.getElementById('activeName'); if (n) n.textContent = lbl; }
+  else chip.style.display = 'none';
+}
+// Clear the patient identity and start a fresh (anonymous) questionnaire.
+function clearPatient() { session.name = session.ref = session.age = session.gender = ''; session.followup = false; reset(); render(); }
+
+// Session card: patient details (name / age / gender + optional reference code)
+// and the follow-up toggle. Repeat visits link by reference, or by name if no
+// reference is given.
 function sessionCard() {
   const card = el('div', { class: 'sec-card' });
-  card.appendChild(el('div', { class: 'sec-head', style: 'background:#3A4A5A' }, 'Visit details (optional)'));
+  card.appendChild(el('div', { class: 'sec-head', style: 'background:#3A4A5A' }, 'Patient details'));
   const body = el('div', { class: 'sec-body' });
   body.appendChild(el('div', { class: 'q-sub', style: 'padding-top:8px' },
-    'A patient reference links repeat visits so progress can be tracked. Use a code, not a name (de-identified).'));
+    'Used to label and link repeat visits. Stored only in this browser (never transmitted).'));
+
+  const inStyle = 'padding:8px 10px;border:1px solid #C9D2DC;border-radius:6px;font-size:14px';
+  // Name
+  const nrow = el('div', { class: 'q' });
+  nrow.appendChild(el('div', { class: 'q-txt', style: 'font-weight:500' }, 'Name'));
+  const nameIn = el('input', { type: 'text', value: session.name || '', placeholder: 'Patient name', style: inStyle + ';width:200px' });
+  nameIn.oninput = () => { session.name = nameIn.value; updateIdentityChip(); };
+  nrow.appendChild(nameIn); body.appendChild(nrow);
+
+  // Age + Gender (one row)
+  const agrow = el('div', { class: 'q' });
+  agrow.appendChild(el('div', { class: 'q-txt', style: 'font-weight:500' }, 'Age & gender'));
+  const wrap = el('div', { style: 'display:flex;gap:8px;align-items:center;flex-wrap:wrap' });
+  const ageIn = el('input', { type: 'text', inputmode: 'numeric', value: session.age || '', placeholder: 'Age', style: inStyle + ';width:64px' });
+  ageIn.oninput = () => { session.age = ageIn.value; };
+  wrap.appendChild(ageIn);
+  ['Female', 'Male', 'Other'].forEach(g => {
+    const b = el('button', { class: `chip-opt${session.gender === g ? ' sel' : ''}`, type: 'button' }, g);
+    b.onclick = () => { session.gender = session.gender === g ? '' : g; wrap.querySelectorAll('.chip-opt').forEach(o => o.classList.remove('sel')); if (session.gender) b.classList.add('sel'); };
+    wrap.appendChild(b);
+  });
+  agrow.appendChild(wrap); body.appendChild(agrow);
+
+  // Reference code
   const row = el('div', { class: 'q' });
-  row.appendChild(el('div', { class: 'q-txt', style: 'font-weight:500' }, 'Patient reference (code)'));
-  const input = el('input', { type: 'text', value: session.ref || '', placeholder: 'e.g. P-1042',
-    style: 'padding:8px 10px;border:1px solid #C9D2DC;border-radius:6px;font-size:14px;width:160px' });
-  input.oninput = () => { session.ref = input.value; };
+  row.appendChild(el('div', { class: 'q-txt', style: 'font-weight:500' }, 'Reference / ID (optional)'));
+  const input = el('input', { type: 'text', value: session.ref || '', placeholder: 'e.g. P-1042', style: inStyle + ';width:160px' });
+  input.oninput = () => { session.ref = input.value; updateIdentityChip(); };
   row.appendChild(input);
   body.appendChild(row);
   // Follow-up toggle
@@ -1408,13 +1493,12 @@ function riskMatrixCard(severity, lens) {
   const activeKey = (sevHigh ? 'H' : 'L') + (riskHigh ? 'H' : 'L');
   const ghi = gutHealthIndex(severity.index, lens.count);
   const card = el('div', { class: 'card', style: 'border-left:6px solid #185FA5' });
-  card.appendChild(el('h2', {}, 'Gut Health Index (experimental)'));
-  // Single blended number — shown WITH its components, flagged experimental.
+  card.appendChild(el('h2', {}, 'Gut Health Index'));
+  // Single blended number — shown WITH its two component reads.
   card.appendChild(el('div', { class: 'hero', style: 'align-items:center' },
     `<div><div class="big">${ghi != null ? ghi : '—'}</div><div class="sub">Gut Health Index</div></div>
      <div style="flex:1;min-width:180px">
-       <span class="opt-tag" style="background:#FCEFCF;color:#7A5800">experimental · pre-validation</span>
-       <div style="font-size:12px;color:var(--inks);margin-top:6px;line-height:1.5">A single blended score = <b>0.7 × severity + 0.3 × microbiome-risk</b> (higher = worse). Weights are placeholders to refit at pilot — read the two components below.</div>
+       <div style="font-size:12px;color:var(--inks);line-height:1.5">A single blended score = <b>0.7 × severity + 0.3 × microbiome-risk</b> (higher = worse). The two components are shown below.</div>
      </div>`));
   card.appendChild(el('div', { class: 'row', style: 'gap:10px;flex-wrap:wrap;margin:4px 0 8px' },
     `<span class="pill ${severity.cls}">Severity: ${severity.index}% · ${esc(severity.label)}</span>
@@ -1536,12 +1620,14 @@ function render() {
   root.appendChild(medsCard());
   root.appendChild(lifestyleCard());
   root.appendChild(sleepCard());
+  root.appendChild(surgicalCard());
   root.appendChild(dysCard());
 
   const actions = el('div', { class: 'card row', style: 'justify-content:flex-end' });
   actions.appendChild(el('button', { class: 'btn btn-g', onclick: calc }, 'See results →'));
   root.appendChild(actions);
   root.appendChild(el('div', { id: 'patient-results' }));
+  updateIdentityChip();
 }
 
 const PSS4_COLOR = ['s0', 's0', 's1', 's2', 's3']; // map 0–4 anchors to colour classes
@@ -1744,6 +1830,29 @@ function chipRow(label, options, getter, setter) {
   return row;
 }
 
+// Surgical history (multi-select) — asked routinely for visceral / fascial
+// manipulation. Adhesion-type surgeries feed manual-therapy candidacy (Tier 2);
+// microbiome-altering ones (gallbladder/resection/bariatric) feed the dys lens.
+function surgicalCard() {
+  const card = el('div', { class: 'sec-card' });
+  card.appendChild(el('div', { class: 'sec-head', style: 'background:#6B4A2E' }, 'Surgical history'));
+  const body = el('div', { class: 'sec-body' });
+  body.appendChild(el('div', { class: 'q-sub', style: 'padding-top:8px' }, 'Tap any past surgeries. Informs manual-therapy (adhesions) and microbiome reasoning — not part of the GI score.'));
+  const chips = el('div', { class: 'chips' });
+  SURGERIES.forEach(s => {
+    const on = extras.surgeries.includes(s.id);
+    const b = el('button', { class: `chip-opt${on ? ' sel' : ''}`, type: 'button' }, esc(s.label));
+    b.onclick = () => {
+      const i = extras.surgeries.indexOf(s.id);
+      if (i >= 0) extras.surgeries.splice(i, 1); else extras.surgeries.push(s.id);
+      b.classList.toggle('sel');
+    };
+    chips.appendChild(b);
+  });
+  body.appendChild(chips); card.appendChild(body);
+  return card;
+}
+
 function redFlagCard() {
   const card = el('div', { class: 'sec-card' });
   card.appendChild(el('div', { class: 'sec-head', style: 'background:#A32D2D' },
@@ -1819,7 +1928,7 @@ function calc() {
   const patterns = detectPatterns(score, driverExtras, answers);
   const fired = firedRedFlags(redflags);
   const lens = dysbiosisLens(extras);
-  const tri = triage(score, patterns, fired, lens);
+  const tri = triage(score, patterns, fired, lens, { adhesionSurgery: surgicalFlags(extras).adhesion });
 
   const out = document.getElementById('patient-results');
   out.innerHTML = '';
@@ -1965,23 +2074,28 @@ function calc() {
   };
   actions.appendChild(dlBtn);
   const newBtn = el('button', { class: 'btn', type: 'button' }, 'Start new');
-  newBtn.onclick = () => { reset(); render(); window.scrollTo({ top: 0, behavior: 'smooth' }); };
+  newBtn.onclick = () => { clearPatient(); window.scrollTo({ top: 0, behavior: 'smooth' }); };
   actions.appendChild(newBtn);
   out.appendChild(actions);
 
   out.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
 }
 
-// Start a fresh questionnaire, optionally pre-bound to a patient reference (and
-// flagged as a follow-up). Used by the Patient-records tab's "New follow-up".
-function newVisitFor(ref, followup) {
+// Start a fresh questionnaire, optionally pre-bound to a patient identity (and
+// flagged as a follow-up). Used by the Patient-records tab's New-questionnaire /
+// New-follow-up actions. identity = { name, age, gender, ref } (all optional).
+function newVisitFor(identity, followup) {
   reset();
-  session.ref = ref || '';
+  const id = identity || {};
+  session.name = id.name || '';
+  session.age = id.age || '';
+  session.gender = id.gender || '';
+  session.ref = id.ref || '';
   session.followup = !!followup;
   render();
 }
 
-__e.reset = reset; __e.render = render; __e.newVisitFor = newVisitFor;
+__e.reset = reset; __e.render = render; __e.newVisitFor = newVisitFor; __e.clearPatient = clearPatient;
 return __e;
 };
 
@@ -2004,7 +2118,14 @@ let q = '';                                // search query
 
 function init(appCtx) { ctx = appCtx; }
 function show() { render(); }              // called when the tab is opened
-function patientLabel(p) { return (p.ref && String(p.ref).trim()) || 'Anonymous'; }
+function patientLabel(p) { return (p.name && String(p.name).trim()) || (p.ref && String(p.ref).trim()) || 'Anonymous'; }
+function patientMeta(p) {
+  const bits = [];
+  if (p.age) bits.push('Age ' + esc(String(p.age)));
+  if (p.gender) bits.push(esc(p.gender));
+  if (p.ref) bits.push('Ref ' + esc(p.ref));
+  return bits.join(' · ');
+}
 
 function render() {
   const root = document.getElementById('mode-record');
@@ -2055,7 +2176,7 @@ function paint(db) {
     card.appendChild(el('div', { class: 'pt-top' },
       `<div class="pt-av">${esc(patientLabel(p).slice(0, 1).toUpperCase())}</div>
        <div><div class="pt-name">${esc(patientLabel(p))}</div>
-       <div class="pt-meta">${(p.visits || []).length} visit${(p.visits || []).length === 1 ? '' : 's'}</div></div>`));
+       <div class="pt-meta">${patientMeta(p) || ((p.visits || []).length + ' visit' + ((p.visits || []).length === 1 ? '' : 's'))}</div></div>`));
     card.appendChild(el('div', { class: 'pt-stats' },
       `<div class="pt-stat"><div class="v">${latest ? latest.index + '%' : '—'}</div><div class="l">Latest index</div></div>
        <div class="pt-stat"><div class="v" style="font-size:12px">${latest ? esc(latest.band) : '—'}</div><div class="l">${deltaHtml}</div></div>`));
@@ -2070,8 +2191,11 @@ function renderDetail(root, db) {
 
   const head = el('div', { class: 'row', style: 'align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px' });
   head.appendChild(el('button', { class: 'back-btn', type: 'button', onclick: () => { view = { mode: 'list', patientId: null }; render(); } }, '← All records'));
-  head.appendChild(el('h2', { style: 'flex:1;margin:0' }, esc(patientLabel(p))));
-  if (p.ref) head.appendChild(el('button', { class: 'btn btn-o', type: 'button', onclick: () => ctx.goQuestionnaire(p.ref, true) }, '+ New follow-up'));
+  const meta = patientMeta(p);
+  head.appendChild(el('div', { style: 'flex:1' },
+    `<h2 style="margin:0">${esc(patientLabel(p))}</h2>${meta ? `<div class="muted" style="font-size:12px">${meta}</div>` : ''}`));
+  const identity = { name: p.name, age: p.age, gender: p.gender, ref: p.ref };
+  head.appendChild(el('button', { class: 'btn btn-o', type: 'button', onclick: () => ctx.goQuestionnaire(identity, true) }, '+ New follow-up'));
   root.appendChild(head);
 
   const visits = (p.visits || []).slice().sort((a, b) => (a.date || 0) - (b.date || 0));
@@ -2196,12 +2320,14 @@ function setMode(name) {
 
 function boot() {
   Record.init({
-    // Switch to the questionnaire, optionally pre-bound to a patient ref + follow-up.
-    goQuestionnaire: (ref, followup) => { Patient.newVisitFor(ref, followup); setMode('patient'); window.scrollTo({ top: 0 }); },
+    // Switch to the questionnaire, optionally pre-bound to a patient identity + follow-up.
+    goQuestionnaire: (identity, followup) => { Patient.newVisitFor(identity, followup); setMode('patient'); window.scrollTo({ top: 0 }); },
   });
   Patient.reset(); Patient.render();
   const sw = document.getElementById('modeSwitch');
   if (sw) sw.addEventListener('click', e => { const b = e.target.closest('.mode-btn'); if (b) setMode(b.dataset.mode); });
+  const clr = document.getElementById('activeClear');
+  if (clr) clr.addEventListener('click', () => { Patient.clearPatient(); setMode('patient'); });
 }
 boot();
 // Pilot-data hook: until the clinician/database surface lands, a researcher can
