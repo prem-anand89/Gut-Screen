@@ -215,7 +215,16 @@ const { scaleFor } = __req('scales.js');
 //   role 'screen' = downstream screening domain; modifier, not score-dilator.
 const SECTIONS = [
   // Domain 1 (locked): GSRS-derived GI core. 15 items, 0–3 severity, 2-wk recall.
-  { id: 'GI', label: 'GI', full: 'Gut symptoms (GSRS-based)', role: 'core', color: '#0F6E56', bg: '#E1F5EE' },
+  { id: 'GI', label: 'GI', full: 'Gut symptoms (GSRS-based)', role: 'core',   color: '#0F6E56', bg: '#E1F5EE' },
+  // Downstream screening domains (DRAFT — under co-design). role 'screen'.
+  { id: 'IM', label: 'IM', full: 'Immune & inflammatory',     role: 'screen', color: '#A32D2D', bg: '#FCEBEB' },
+  { id: 'BG', label: 'BG', full: 'Brain-gut & mood',          role: 'screen', color: '#534AB7', bg: '#EEEDFE' },
+  { id: 'ME', label: 'ME', full: 'Metabolic',                 role: 'screen', color: '#BA7517', bg: '#FAEEDA' },
+  { id: 'SK', label: 'SK', full: 'Skin & candida signs',      role: 'screen', color: '#993C1D', bg: '#FAECE7' },
+  { id: 'HR', label: 'HR', full: 'Hormonal & urogenital',     role: 'screen', color: '#B0418C', bg: '#F7EAF3' },
+  { id: 'NU', label: 'NU', full: 'Nutrient & absorption',     role: 'screen', color: '#185FA5', bg: '#E6F1FB' },
+  { id: 'SL', label: 'SL', full: 'Sleep & circadian',         role: 'screen', color: '#117A8B', bg: '#E2F4F6' },
+  { id: 'OR', label: 'OR', full: 'Oral & ENT',                role: 'screen', color: '#7A6A1E', bg: '#F4F1DF' },
 ];
 
 // ── QUESTIONS — co-design output. ───────────────────────────────────────────
@@ -262,6 +271,82 @@ const QUESTIONS = [
     patientText: 'Hard stools', patientSub: 'Hard stools that are difficult to pass' },
   { id: 'gsrs_incomplete', section: 'GI', cluster: 'Constipation',
     patientText: 'Incomplete emptying', patientSub: "A feeling your bowel isn't completely empty afterward" },
+
+  // ── IM — Immune & inflammatory (DRAFT) ──
+  { id: 'im_food_react', section: 'IM', patientText: 'Reactions to certain foods',
+    patientSub: 'Bloating, rash, headache, or congestion after eating particular foods' },
+  { id: 'im_infections', section: 'IM', patientText: 'Frequent infections',
+    patientSub: 'Colds, UTIs, or skin infections several times a year' },
+  { id: 'im_allergies', section: 'IM', patientText: 'Allergies or hay fever',
+    patientSub: 'Runny nose, itchy eyes, sneezing, or other atopy' },
+  { id: 'im_joint', section: 'IM', patientText: 'Joint aches or stiffness',
+    patientSub: 'Without a clear injury or mechanical cause' },
+  { id: 'im_histamine', section: 'IM', patientText: 'Flushing, hives, or headache after fermented foods, wine, or aged cheese',
+    patientSub: 'A possible histamine-intolerance signal' },
+
+  // ── BG — Brain-gut & mood (DRAFT) ──
+  { id: 'bg_brainfog', section: 'BG', patientText: 'Brain fog or poor concentration',
+    patientSub: 'Difficulty thinking clearly, word-finding, mental fatigue' },
+  { id: 'bg_anxiety', section: 'BG', patientText: 'Anxiety or nervousness',
+    patientSub: 'Restlessness, racing thoughts, or unease' },
+  { id: 'bg_mood', section: 'BG', patientText: 'Low mood or loss of interest',
+    patientSub: 'Persistent low mood or reduced enjoyment of things' },
+  { id: 'bg_fatigue', section: 'BG', patientText: 'Fatigue not relieved by rest',
+    patientSub: 'Ongoing tiredness or energy crashes, especially after meals' },
+  { id: 'bg_headache', section: 'BG', patientText: 'Headaches or migraines' },
+
+  // ── ME — Metabolic (DRAFT) ──
+  { id: 'me_weight', section: 'ME', patientText: 'Unexplained weight gain or difficulty losing weight',
+    patientSub: 'Despite reasonable diet and activity' },
+  { id: 'me_cravings', section: 'ME', patientText: 'Strong sugar or carbohydrate cravings' },
+  { id: 'me_glucose', section: 'ME', patientText: 'Energy crashes or blood-sugar swings',
+    patientSub: 'Shakiness, irritability, or a slump between meals' },
+  { id: 'me_thyroid', section: 'ME', patientText: 'Thyroid-type symptoms',
+    patientSub: 'Cold intolerance, hair loss, sluggishness, unexplained changes' },
+
+  // ── SK — Skin & candida signs (DRAFT) ──
+  { id: 'sk_skin', section: 'SK', patientText: 'Acne, eczema, or unexplained skin rashes' },
+  { id: 'sk_itch', section: 'SK', patientText: 'Itching — skin or rectal' },
+  { id: 'sk_thrush', section: 'SK', patientText: 'Oral thrush or a white-coated tongue' },
+  { id: 'sk_nails', section: 'SK', patientText: 'Brittle, ridged, or discoloured nails' },
+  { id: 'sk_yeast', section: 'SK', optional: true, optionalLabel: 'if relevant',
+    patientText: 'Recurrent genital yeast infections' },
+
+  // ── HR — Hormonal & urogenital (estrobolome) (DRAFT — all optional) ──
+  { id: 'hr_pms', section: 'HR', optional: true, optionalLabel: 'menstruating',
+    patientText: 'PMS or worsening symptoms around your cycle' },
+  { id: 'hr_irregular', section: 'HR', optional: true, optionalLabel: 'menstruating',
+    patientText: 'Irregular, heavy, or painful periods' },
+  { id: 'hr_peri', section: 'HR', optional: true, optionalLabel: 'if relevant',
+    patientText: 'Perimenopausal symptoms', patientSub: 'Hot flushes, night sweats, cycle changes' },
+  { id: 'hr_uti', section: 'HR', optional: true, optionalLabel: 'if relevant',
+    patientText: 'Recurrent UTIs or bladder discomfort' },
+  { id: 'hr_bv', section: 'HR', optional: true, optionalLabel: 'female',
+    patientText: 'Recurrent vaginal infections or BV' },
+  { id: 'hr_libido', section: 'HR', optional: true, optionalLabel: 'if relevant',
+    patientText: 'Low libido or hormone-related mood swings' },
+
+  // ── NU — Nutrient & absorption (DRAFT) ──
+  { id: 'nu_known_def', section: 'NU', optional: true, optionalLabel: 'if tested',
+    patientText: 'Known low B12, iron, vitamin D, or magnesium', patientSub: 'Found on past blood work' },
+  { id: 'nu_hair', section: 'NU', patientText: 'Hair thinning or hair loss' },
+  { id: 'nu_iron', section: 'NU', patientText: 'Pallor, breathlessness, or restless legs',
+    patientSub: 'Possible iron-deficiency signs' },
+  { id: 'nu_mouth', section: 'NU', patientText: 'Cracks at the corners of your mouth, sore tongue, or easy bruising',
+    patientSub: 'Possible micronutrient-deficiency signs' },
+
+  // ── SL — Sleep & circadian (DRAFT) ──
+  { id: 'sl_onset', section: 'SL', patientText: 'Trouble falling asleep' },
+  { id: 'sl_waking', section: 'SL', patientText: 'Waking during the night' },
+  { id: 'sl_unrefreshed', section: 'SL', patientText: 'Waking unrefreshed',
+    patientSub: "Sleep that doesn't restore your energy" },
+  { id: 'sl_short', section: 'SL', patientText: 'Getting fewer hours of sleep than you need' },
+
+  // ── OR — Oral & ENT (DRAFT) ──
+  { id: 'or_breath', section: 'OR', patientText: 'Persistent bad breath despite good oral hygiene' },
+  { id: 'or_gums', section: 'OR', patientText: 'Bleeding or inflamed gums, or frequent mouth ulcers' },
+  { id: 'or_sinus', section: 'OR', patientText: 'Frequent sinus congestion or post-nasal drip' },
+  { id: 'or_throat', section: 'OR', patientText: 'Frequent sore throat or throat-clearing' },
 ];
 
 // ── Derived index — the ONLY question index in the app. ─────────────────────
