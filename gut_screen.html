@@ -378,7 +378,7 @@ const QTOTAL = QUESTIONS.length;
 // Per-item max = (scale option count − 1). Per-section max = Σ item maxes.
 function itemMax(q) { return scaleFor(q.scale).length - 1; }
 const _sectionMax = SECTIONS.reduce((m, s) => {
-  m[s.id] = QUESTIONS.filter(q => q.section === s.id).reduce((t, q) => t + itemMax(q), 0);
+  m[s.id] = QUESTIONS.filter(q => q.section === s.id && !q.driverOnly).reduce((t, q) => t + itemMax(q), 0);
   return m;
 }, {});
 function sectionMax(sectionId) { return _sectionMax[sectionId] || 0; }
@@ -836,6 +836,7 @@ const { scaleFor, RECALL_NOTE, PSS4_ITEMS, PSS4_ANCHORS, pss4Score, BRISTOL_TYPE
 const { computeScores, scoreConfidence } = __req('scoring.js');
 const { RED_FLAGS, anyRedFlag, firedRedFlags, RED_FLAG_BANNER } = __req('redflags.js');
 const { el, esc, toast } = __req('util.js');
+const Store = __req('storage.js');
 
 let answers = {};      // id -> value (absent = unanswered)
 let redflags = {};     // rf_id -> bool
@@ -848,6 +849,25 @@ const blankExtras = () => ({
 let extras = blankExtras();
 
 function reset() { answers = {}; redflags = {}; extras = blankExtras(); }
+
+// Save the current visit to localStorage so the pilot CSV has data to export.
+// The clinician/database surface is deferred, so every saved visit is its own
+// anonymous patient (a fresh pseudo-id) — no PII, no cross-visit linking from
+// this surface. The pilot export anonymises further (P1, P2, …); the stored
+// patient id is just a key for the storage layer's merge logic.
+function saveVisit() {
+  const db = Store.loadDB();
+  const visit = {
+    id: Store.uid(),
+    date: Date.now(),
+    answers: { ...answers },                       // includes 'na' values as-is
+    extras: JSON.parse(JSON.stringify(extras)),    // deep-clone (pss4 array, meds object)
+    redflags: { ...redflags },
+  };
+  db.patients.push({ id: Store.uid(), visits: [visit] });
+  Store.saveDB(db);
+  return visit.id;
+}
 
 function render() {
   const root = document.getElementById('mode-patient');
@@ -939,7 +959,15 @@ function painCard() {
   const regWrap = el('div', { style: 'margin-top:10px' });
   for (let v = 0; v <= 10; v++) {
     const b = el('button', { class: `nrs-opt${extras.nrsPain === v ? ' sel' : ''}`, type: 'button' }, String(v));
-    b.onclick = () => { extras.nrsPain = v; nrs.querySelectorAll('.nrs-opt').forEach(o => o.classList.remove('sel')); b.classList.add('sel'); regWrap.style.display = v > 0 ? 'block' : 'none'; };
+    b.onclick = () => {
+      extras.nrsPain = v;
+      nrs.querySelectorAll('.nrs-opt').forEach(o => o.classList.remove('sel'));
+      b.classList.add('sel');
+      regWrap.style.display = v > 0 ? 'block' : 'none';
+      // Pain=0 means "no pain": a region answer is meaningless — clear it so the
+      // pilot CSV doesn't pair a region with nrsPain=0 and confuse the analysis.
+      if (v === 0) { extras.painRegion = null; regWrap.querySelectorAll('.chip-opt').forEach(o => o.classList.remove('sel')); }
+    };
     nrs.appendChild(b);
   }
   body.appendChild(nrs);
@@ -1124,6 +1152,34 @@ function calc() {
      ${f.score ? `<div class="dl">${esc(f.score)}</div>` : ''}`)));
   driv.appendChild(dg);
   out.appendChild(driv);
+
+  // Save-a-visit + pilot-CSV download. Until the clinician/database surface
+  // lands, this is the only way a response enters the pilot dataset.
+  const actions = el('div', { class: 'card row', style: 'justify-content:flex-end;gap:8px;flex-wrap:wrap' });
+  const saveBtn = el('button', { class: 'btn btn-g', type: 'button' }, 'Save this response');
+  saveBtn.onclick = () => {
+    try {
+      const vid = saveVisit();
+      saveBtn.disabled = true; saveBtn.textContent = 'Saved ✓';
+      toast('Response saved. Visit ID ' + vid.slice(0, 6) + '…');
+    } catch (e) { toast('Could not save: ' + (e && e.message || 'storage error')); }
+  };
+  actions.appendChild(saveBtn);
+  const dlBtn = el('button', { class: 'btn', type: 'button' }, 'Download pilot CSV');
+  dlBtn.onclick = () => {
+    const csv = Store.pilotExportCSV(Store.loadDB());
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `gut-screen-pilot-${new Date().toISOString().slice(0,10)}.csv`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  };
+  actions.appendChild(dlBtn);
+  const newBtn = el('button', { class: 'btn', type: 'button' }, 'Start new');
+  newBtn.onclick = () => { reset(); render(); window.scrollTo({ top: 0, behavior: 'smooth' }); };
+  actions.appendChild(newBtn);
+  out.appendChild(actions);
 
   out.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
 }
