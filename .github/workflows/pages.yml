@@ -1,10 +1,12 @@
 name: Deploy to GitHub Pages
 
-# Auto-publishes the self-contained app on every push to main so the live URL
-# always reflects the latest committed state.
+# Auto-publishes the self-contained app so the live URL always reflects the
+# latest committed state. Deploys on push to main (the permanent link) and to
+# the active feature branch (a live preview while iterating). Pages publishes a
+# single site, so the most recent push wins.
 on:
   push:
-    branches: [main]
+    branches: [main, claude/magical-hawking-ucwqo1]
   workflow_dispatch:
 
 permissions:
@@ -26,17 +28,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Build a tiny site dir: the app is a single self-contained HTML file.
-      # Serve it as index.html so it loads at the site root, and keep the
-      # original filename too so the BM_Gut_Suite.html URL also works.
+      # The v2 app is a single self-contained HTML file. Serve gut_screen.html
+      # as index.html so it loads at the site root, and keep the original
+      # filename available too. The legacy suite file is published if present.
       - name: Assemble site
         run: |
           mkdir -p _site
-          cp BM_Gut_Suite.html _site/index.html
-          cp BM_Gut_Suite.html _site/BM_Gut_Suite.html
+          cp gut_screen.html _site/index.html
+          cp gut_screen.html _site/gut_screen.html
+          [ -f BM_Gut_Suite.html ] && cp BM_Gut_Suite.html _site/BM_Gut_Suite.html || true
 
       - name: Configure Pages
         uses: actions/configure-pages@v5
+        with:
+          enablement: true
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
