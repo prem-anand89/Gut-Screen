@@ -521,9 +521,10 @@ function modifiableFactors(extras) {
 
 __e.SCALES = SCALES; __e.scaleFor = scaleFor; __e.RECALL_NOTE = RECALL_NOTE;
 // TRIM_PLAN — the de-dup decisions ("conceptual now, empirical at pilot").
-// Conceptual cuts applied NOW: the affective BG items left the Index (folded into
-// the Psychological-load driver). Everything else is FLAGGED, not cut — the pilot
-// makes the call. method[] is the empirical recipe to run once responses exist.
+// Conceptual decisions applied NOW: the affective BG items are dual-role (scored
+// in the BG screen AND folded into the Psychological-load driver). Everything else
+// is FLAGGED, not cut — the pilot makes the call. method[] is the empirical recipe
+// to run once responses exist; tuning[] holds weight questions (not cuts).
 const TRIM_PLAN = {
   applied: [
     { ids: ['bg_anxiety', 'bg_mood'], action: 'dual-role:BG-screen + driver:psych',
@@ -534,6 +535,10 @@ const TRIM_PLAN = {
     { id: 'me_cravings', reason: 'Diet-quality driver may now explain this; test redundancy.' },
     { id: 'me_glucose',  reason: 'Overlaps me_cravings; candidate to merge.' },
     { id: 'im_food_react', reason: 'May co-move with diet driver; verify added value to Index.' },
+  ],
+  tuning: [
+    { ids: ['bg_anxiety', 'bg_mood'], question: 'Full weight vs down-weighted in the BG screen?',
+      reason: 'Affective symptoms have substantial non-gut causes. Currently full weight, with the GI-dominance cap as the only guardrail. At pilot, compare their item-total correlation to the GI core against the other BG items; if they carry less gut-brain signal, apply a sub-1 weight rather than dropping them.' },
   ],
   // Drivers intentionally kept separate from the Index (modifiable, tracked):
   drivers: ['psych(PSS-4+anxiety+mood)', 'pain(NRS)', 'bristol', 'disruptors(abx/ppi/nsaid)', 'diet(fibre/processed)', 'alcohol', 'activity'],
