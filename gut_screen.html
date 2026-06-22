@@ -758,6 +758,8 @@ const ge = (v, t) => v != null && v >= t;
 const le = (v, t) => v != null && v <= t;
 const clu = (s, k) => (s.clusterNorm && s.clusterNorm[k] != null) ? s.clusterNorm[k] : null;
 const gi  = (s) => (s.secNorm && s.secNorm.GI != null) ? s.secNorm.GI : null;
+// Individual item value (id-map answers); 'na'/blank → null so they never count.
+const av  = (a, id) => (a && typeof a[id] === 'number') ? a[id] : null;
 
 const PATTERNS = [
   {
@@ -785,15 +787,80 @@ const PATTERNS = [
     },
   },
   {
+    id: 'mixed_bowel',
+    label: 'Mixed / alternating bowel pattern',
+    desc: 'Symptoms swing between constipation and loose stools (an alternating, IBS-mixed-type picture). This needs a different approach from a single-direction bowel problem — worth mapping the triggers with your clinician.',
+    eval: (s, ex) => {
+      const constip = ge(clu(s, 'Constipation'), 0.3);
+      const diarr   = ge(clu(s, 'Diarrhoea'), 0.3);
+      const urgency = ge(clu(s, 'Pain'), 0.3); // pain/cramping often accompanies alternating bowel
+      const signals = [constip, diarr, urgency];
+      return { fires: constip && diarr, signals }; // exactly the case the single-direction patterns suppress
+    },
+  },
+  {
     id: 'reflux_upper_gi',
     label: 'Reflux / upper-GI pattern',
-    desc: 'Symptom burden concentrated in upper-GI and reflux. Lifestyle factors and longstanding acid-blocker use are worth reviewing with your clinician.',
+    desc: 'Symptom burden concentrated in reflux and the upper GI tract. Lifestyle factors and longstanding acid-blocker use are worth reviewing with your clinician.',
     eval: (s, ex) => {
       const reflux = ge(clu(s, 'Reflux'), 0.4);
-      const indig  = ge(clu(s, 'Indigestion'), 0.5);
+      const indig  = ge(clu(s, 'Indigestion'), 0.5); // confidence signal only — Indigestion now owns the bloating pattern
       const ppi    = !!(ex.meds && ex.meds.ppi);
       const signals = [reflux, indig, ppi];
-      return { fires: reflux || indig, signals };
+      return { fires: reflux, signals };
+    },
+  },
+  {
+    id: 'bloating_fermentation',
+    label: 'Bloating / gas-predominant pattern',
+    desc: 'Bloating, gas and fullness are prominent — a fermentation-type picture sometimes linked to SIBO. Meal timing, fermentable-carb triggers, and breath testing are worth discussing with your clinician.',
+    eval: (s, ex, a) => {
+      const indig    = ge(clu(s, 'Indigestion'), 0.5);
+      const bloating = ge(av(a, 'gsrs_bloating'), 2);
+      const foodReact = ge(av(a, 'im_food_react'), 2);
+      const signals = [indig, bloating, foodReact];
+      return { fires: indig, signals };
+    },
+  },
+  {
+    id: 'candida_yeast',
+    label: 'Yeast / candida-leaning pattern',
+    desc: 'Several signs sometimes associated with yeast overgrowth co-occur (oral thrush or a coated tongue, recurrent yeast infections, itching, strong sugar cravings). This is a pattern to explore with your clinician — not a diagnosis.',
+    eval: (s, ex, a) => {
+      const thrush   = ge(av(a, 'sk_thrush'), 2);
+      const yeast    = ge(av(a, 'sk_yeast'), 2);   // optional item
+      const itch     = ge(av(a, 'sk_itch'), 2);
+      const cravings = ge(av(a, 'me_cravings'), 2);
+      const nails    = ge(av(a, 'sk_nails'), 2);
+      const signals = [thrush, yeast, itch, cravings, nails];
+      return { fires: signals.filter(Boolean).length >= 2, signals };
+    },
+  },
+  {
+    id: 'histamine_intolerance',
+    label: 'Histamine-intolerance pattern',
+    desc: 'Reactions to fermented foods, wine, or aged cheese — often with flushing, hives, or headache — can point to histamine intolerance. A trial low-histamine approach or a DAO discussion with your clinician may help.',
+    eval: (s, ex, a) => {
+      const histamine = ge(av(a, 'im_histamine'), 2); // anchor: the specific item
+      const allergies = ge(av(a, 'im_allergies'), 2);
+      const headache  = ge(av(a, 'bg_headache'), 2);
+      const signals = [histamine, allergies, headache];
+      return { fires: histamine, signals };
+    },
+  },
+  {
+    id: 'nutrient_malabsorption',
+    label: 'Nutrient-malabsorption pattern',
+    desc: 'Signs of low nutrient status (hair thinning, iron-type signs, mouth changes, or a known deficiency) alongside gut symptoms can suggest malabsorption. Worth checking the relevant bloods with your clinician.',
+    eval: (s, ex, a) => {
+      const known  = ge(av(a, 'nu_known_def'), 1); // optional; any positive answer counts
+      const hair   = ge(av(a, 'nu_hair'), 2);
+      const iron   = ge(av(a, 'nu_iron'), 2);
+      const mouth  = ge(av(a, 'nu_mouth'), 2);
+      const giPresent = ge(gi(s), 0.2);
+      const nuCount = [known, hair, iron, mouth].filter(Boolean).length;
+      const signals = [known, hair, iron, mouth, giPresent];
+      return { fires: nuCount >= 2 && giPresent, signals };
     },
   },
   {
@@ -852,11 +919,12 @@ const CONFIDENCE_BANDS = [
   { min: 0, label: 'Low',      color: '#999' },
 ];
 
-function detectPatterns(score, ex) {
+function detectPatterns(score, ex, answers) {
   const ex_ = ex || {};
+  const a = answers || {};
   const fired = [];
   for (const p of PATTERNS) {
-    const r = p.eval(score, ex_);
+    const r = p.eval(score, ex_, a);
     if (!r.fires) continue;
     const hits = r.signals.filter(Boolean).length;
     const conf = CONFIDENCE_BANDS.find(c => hits >= c.min);
@@ -961,7 +1029,7 @@ function pilotExportCSV(db) {
       const ps = pss4Score(pss);
       const drv = { pss4Score: ps, bgAnxiety: a.bg_anxiety, bgMood: a.bg_mood, dietFibre: ex.dietFibre, dietProcessed: ex.dietProcessed,
                     bristol: ex.bristol, meds, alcohol: ex.alcohol, activity: ex.activity };
-      const fired = new Set(detectPatterns(score, drv).map(p => p.id));
+      const fired = new Set(detectPatterns(score, drv, a).map(p => p.id));
       rows.push([
         'P' + (pi + 1), cell(v.id), v.date ? new Date(v.date).toISOString().slice(0, 10) : '',
         score.completeness, score.index, score.severity.label, score.severity.capped ? 1 : 0,
@@ -1328,7 +1396,7 @@ function calc() {
   // Patterns — first-cut clinical-discussion patterns from drivers + clusters.
   // Conservatively framed ("discuss with your clinician"), confidence based on
   // how many of the supporting signals were actually answered.
-  const patterns = detectPatterns(score, driverExtras);
+  const patterns = detectPatterns(score, driverExtras, answers);
   if (patterns.length > 0) {
     const pcard = el('div', { class: 'card' });
     pcard.appendChild(el('h2', {}, 'Patterns to discuss with your clinician'));
