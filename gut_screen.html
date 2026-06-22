@@ -463,6 +463,38 @@ function dietBand(b) {
   return b < 0.34 ? { l: 'Good', c: '#0F6E56' } : b < 0.67 ? { l: 'Fair', c: '#BA7517' } : { l: 'Poor', c: '#A32D2D' };
 }
 
+// ── DYS-R: dysbiosis-correlate lens (TRIM_PLAN §10) ─────────────────────────
+// Items mechanistically enriched for microbiome-altered phenotypes. Kept in a
+// SEPARATE lens, never folded into the GI Symptom Burden score, and labelled
+// "correlate" (NOT a dysbiosis measurement) until validated against stool
+// sequencing. Feeds Triage Tier 3 + the bloating/post-disruptor patterns.
+const FOOD_TRIGGERS = [
+  { id: 'alliums', label: 'Onion / garlic' },
+  { id: 'legumes', label: 'Beans / lentils' },
+  { id: 'wheat',   label: 'Wheat / bread' },
+  { id: 'dairy',   label: 'Dairy' },
+  { id: 'polyols', label: "Sugar-free ('-ol') sweeteners" },
+];
+const ABX_COURSES   = ['0', '1', '2', '3+'];                  // 0–3 (courses /12mo)
+const GAS_LEVELS     = ['Not at all', 'Mild', 'Moderate', 'Marked']; // 0–3
+const STOOLVAR_LEVELS = ['Never', 'Sometimes', 'Often'];      // 0–2
+const POSTINF_OPTS   = ['No', 'Yes', 'Not sure'];             // 0/1/2 (1 = Yes)
+const PARADOX_OPTS   = ['No', 'Yes', "Haven't tried"];        // 0/1/2 (1 = Yes)
+
+// Returns the count of dysbiosis-correlate signals present + their labels.
+function dysbiosisLens(extras) {
+  const ex = extras || {}, d = ex.dys || {};
+  const signals = [];
+  if (typeof ex.abxCourses === 'number' && ex.abxCourses >= 1)
+    signals.push({ k: 'abx', label: (ABX_COURSES[ex.abxCourses] || ex.abxCourses) + ' antibiotic course(s) in 12mo' });
+  if (d.postInfectious === 1) signals.push({ k: 'postinf', label: 'Post-infectious onset' });
+  if ((d.foodTriggers || []).length >= 2) signals.push({ k: 'fodmap', label: d.foodTriggers.length + ' fermentable-food triggers' });
+  if (typeof d.gasFoul === 'number' && d.gasFoul >= 2) signals.push({ k: 'gas', label: 'Foul / excessive gas' });
+  if (d.fibreParadox === 1) signals.push({ k: 'paradox', label: 'Worse with fibre / probiotics' });
+  if (typeof d.stoolVar === 'number' && d.stoolVar >= 1) signals.push({ k: 'var', label: 'Day-to-day stool variability' });
+  return { count: signals.length, signals };
+}
+
 // ONE shared driver descriptor used by every surface (results now; report later).
 function modifiableFactors(extras) {
   const ex = extras || {};
@@ -523,6 +555,8 @@ __e.PSS4_ITEMS = PSS4_ITEMS; __e.PSS4_REVERSED = PSS4_REVERSED; __e.PSS4_ANCHORS
 __e.psychLoadScore = psychLoadScore; __e.loadBand = loadBand;
 __e.DISRUPTORS = DISRUPTORS; __e.ALCOHOL_LEVELS = ALCOHOL_LEVELS; __e.ACTIVITY_LEVELS = ACTIVITY_LEVELS; __e.dietBurden = dietBurden; __e.dietBand = dietBand;
 __e.SLEEP_ITEMS = SLEEP_ITEMS; __e.SLEEP_ANCHORS = SLEEP_ANCHORS; __e.sleepBurden = sleepBurden; __e.sleepBand = sleepBand;
+__e.FOOD_TRIGGERS = FOOD_TRIGGERS; __e.ABX_COURSES = ABX_COURSES; __e.GAS_LEVELS = GAS_LEVELS; __e.STOOLVAR_LEVELS = STOOLVAR_LEVELS;
+__e.POSTINF_OPTS = POSTINF_OPTS; __e.PARADOX_OPTS = PARADOX_OPTS; __e.dysbiosisLens = dysbiosisLens;
 __e.TRIM_PLAN = TRIM_PLAN;
 __e.BRISTOL_TYPES = BRISTOL_TYPES; __e.PAIN_REGIONS = PAIN_REGIONS; __e.painBand = painBand; __e.modifiableFactors = modifiableFactors;
 return __e;
@@ -798,11 +832,15 @@ const PATTERNS = [
     label: 'Bloating / gas-predominant pattern',
     desc: 'Bloating, gas and fullness are prominent — a fermentation-type picture sometimes linked to SIBO. Meal timing, fermentable-carb triggers, and breath testing are worth discussing with your clinician.',
     eval: (s, ex, a) => {
+      const d = (ex && ex.dys) || {};
       const indig     = ge(clu(s, 'Indigestion'), 0.5);
       const bloating  = ge(av(a, 'gsrs_bloating'), 2);
       const foodReact = ge(av(a, 'im_food_react'), 2);
-      const signals = [indig, bloating, foodReact];
-      return { fires: indig.t, signals };
+      const gasFoul   = ge(d.gasFoul, 2);                 // Dys-R: H2S/excessive gas
+      const paradox   = d.fibreParadox === 1 ? { a: true, t: true } : (d.fibreParadox == null ? { a: false, t: false } : { a: true, t: false });
+      const triggers  = ge((d.foodTriggers || []).length, 2); // ≥2 fermentable triggers
+      const signals = [indig, bloating, foodReact, gasFoul, paradox, triggers];
+      return { fires: indig.t || gasFoul.t || paradox.t, signals };
     },
   },
   {
@@ -840,9 +878,10 @@ const PATTERNS = [
     desc: 'Recent antibiotic, acid-blocker, or NSAID use can shift the microbiome. A recovery-supportive window of a few months is usually appropriate — discuss with your clinician.',
     eval: (s, ex) => {
       const anyDisruptor = hasFlag(ex.meds, ex.meds && (ex.meds.abx || ex.meds.ppi || ex.meds.nsaid));
+      const courses = ge(ex.abxCourses, 1);            // Dys-R: antibiotic dose /12mo
       const giPresent = ge(gi(s), 0.2);
-      const signals = [anyDisruptor, giPresent];
-      return { fires: anyDisruptor.t && giPresent.t, signals };
+      const signals = [anyDisruptor, courses, giPresent];
+      return { fires: (anyDisruptor.t || courses.t) && giPresent.t, signals };
     },
   },
   {
@@ -941,12 +980,13 @@ const TIERS = {
 };
 
 // score: computeScores() output · patterns: detectPatterns() output · firedFlags: array
-function triage(score, patterns, firedFlags) {
+function triage(score, patterns, firedFlags, dys) {
   const pids = new Set((patterns || []).map(p => p.id));
   const band = (score && score.severity) ? score.severity.label : null;
   const capped = !!(score && score.severity && score.severity.capped);
   const pain = (score && score.clusterNorm) ? score.clusterNorm.Pain : null;
   const flags = firedFlags || [];
+  const dysCount = (dys && typeof dys.count === 'number') ? dys.count : 0;
   const has = (id) => pids.has(id);
   const candidacy = { 1: [], 2: [], 3: [], 4: [] };
 
@@ -966,6 +1006,7 @@ function triage(score, patterns, firedFlags) {
   if (has('post_disruptor')) candidacy[3].push('Recent gut-disruptor exposure (strongest probiotic-trial rationale)');
   if (has('bloating_fermentation')) candidacy[3].push('Bloating / fermentation pattern');
   if (has('diarrhoea_dominant')) candidacy[3].push('Loose-stool / urgency pattern');
+  if (dysCount >= 2) candidacy[3].push(dysCount + ' dysbiosis-correlate signals (see lens)');
 
   // Tier 4 — self-management / monitor
   if (has('lifestyle_modifiable')) candidacy[4].push('Modifiable lifestyle factors are the main lever');
@@ -1013,6 +1054,7 @@ function visitScore(v) {
     pss4Score: pss4Score(ex.pss4), bgAnxiety: a.bg_anxiety, bgMood: a.bg_mood,
     dietFibre: ex.dietFibre, dietProcessed: ex.dietProcessed,
     bristol: ex.bristol, meds: ex.meds, alcohol: ex.alcohol, activity: ex.activity,
+    abxCourses: ex.abxCourses, dys: ex.dys,           // Dys-R inputs (keep trend patterns in sync with live)
   };
   const patterns = detectPatterns(sc, drv, a).map(p => p.id);
   return {
@@ -1119,7 +1161,7 @@ __e.blankDB = blankDB; __e.loadDB = loadDB; __e.saveDB = saveDB; __e.uid = uid; 
 function pilotExportCSV(db) {
   const { SECTIONS, QUESTIONS } = __req('schema.js');
   const { computeScores } = __req('scoring.js');
-  const { pss4Score, psychLoadScore, dietBurden, sleepBurden } = __req('scales.js');
+  const { pss4Score, psychLoadScore, dietBurden, sleepBurden, dysbiosisLens } = __req('scales.js');
   const { PATTERNS, detectPatterns } = __req('patterns.js');
   const d = normalise(db);
 
@@ -1139,6 +1181,7 @@ function pilotExportCSV(db) {
     'ex_med_abx', 'ex_med_ppi', 'ex_med_nsaid',
     'ex_dietFibre', 'ex_dietProcessed', 'ex_dietBurden', 'ex_alcohol', 'ex_activity',
     'ex_sleep_1', 'ex_sleep_2', 'ex_sleep_3', 'ex_sleep_4', 'ex_sleepBurden',
+    'ex_abxCourses', 'ex_dys_stoolVar', 'ex_dys_postInfectious', 'ex_dys_gasFoul', 'ex_dys_fibreParadox', 'ex_dys_foodTriggers', 'ex_dysLensCount',
     ...PATTERNS.map(p => 'pat_' + p.id),
   ];
   const rows = [header];
@@ -1149,7 +1192,7 @@ function pilotExportCSV(db) {
       const score = computeScores(a, { bristol: ex.bristol });
       const ps = pss4Score(pss);
       const drv = { pss4Score: ps, bgAnxiety: a.bg_anxiety, bgMood: a.bg_mood, dietFibre: ex.dietFibre, dietProcessed: ex.dietProcessed,
-                    bristol: ex.bristol, meds, alcohol: ex.alcohol, activity: ex.activity };
+                    bristol: ex.bristol, meds, alcohol: ex.alcohol, activity: ex.activity, abxCourses: ex.abxCourses, dys: ex.dys };
       const fired = new Set(detectPatterns(score, drv, a).map(p => p.id));
       rows.push([
         'P' + (pi + 1), cell(v.id), v.date ? new Date(v.date).toISOString().slice(0, 10) : '',
@@ -1162,6 +1205,7 @@ function pilotExportCSV(db) {
         bool(meds && meds.abx, !!meds), bool(meds && meds.ppi, !!meds), bool(meds && meds.nsaid, !!meds),
         cell(ex.dietFibre), cell(ex.dietProcessed), num(dietBurden(drv)), cell(ex.alcohol), cell(ex.activity),
         cell((ex.sleep || [])[0]), cell((ex.sleep || [])[1]), cell((ex.sleep || [])[2]), cell((ex.sleep || [])[3]), num(sleepBurden(ex.sleep)),
+        cell(ex.abxCourses), cell((ex.dys || {}).stoolVar), cell((ex.dys || {}).postInfectious), cell((ex.dys || {}).gasFoul), cell((ex.dys || {}).fibreParadox), cell(((ex.dys || {}).foodTriggers || []).length), cell(dysbiosisLens(ex).count),
         ...PATTERNS.map(p => fired.has(p.id) ? 1 : 0),
       ]);
     });
@@ -1180,7 +1224,8 @@ return __e;
 __modules['ui-patient.js'] = function(__e){
 const { SECTIONS, QUESTIONS, questionsOf, sectionMax, itemMax } = __req('schema.js');
 const { scaleFor, RECALL_NOTE, PSS4_ITEMS, PSS4_ANCHORS, pss4Score, BRISTOL_TYPES, PAIN_REGIONS, modifiableFactors,
-        DISRUPTORS, ALCOHOL_LEVELS, ACTIVITY_LEVELS, SLEEP_ITEMS, SLEEP_ANCHORS } = __req('scales.js');
+        DISRUPTORS, ALCOHOL_LEVELS, ACTIVITY_LEVELS, SLEEP_ITEMS, SLEEP_ANCHORS,
+        FOOD_TRIGGERS, ABX_COURSES, GAS_LEVELS, STOOLVAR_LEVELS, POSTINF_OPTS, PARADOX_OPTS, dysbiosisLens } = __req('scales.js');
 const { computeScores, scoreConfidence } = __req('scoring.js');
 const { RED_FLAGS, anyRedFlag, firedRedFlags, RED_FLAG_BANNER } = __req('redflags.js');
 const { el, esc, toast } = __req('util.js');
@@ -1197,6 +1242,8 @@ const blankExtras = () => ({
   meds: { abx: false, ppi: false, nsaid: false },
   dietFibre: null, dietProcessed: null, alcohol: null, activity: null,
   sleep: [null, null, null, null],   // relocated from a scored domain to a driver
+  abxCourses: null,                  // Dys-R: antibiotic dose /12mo
+  dys: { stoolVar: null, postInfectious: null, gasFoul: null, fibreParadox: null, foodTriggers: [] },
 });
 let extras = blankExtras();
 // Session: a clinician-assigned patient reference (de-identified — a code, not a
@@ -1378,6 +1425,7 @@ function render() {
   root.appendChild(medsCard());
   root.appendChild(lifestyleCard());
   root.appendChild(sleepCard());
+  root.appendChild(dysCard());
 
   const actions = el('div', { class: 'card row', style: 'justify-content:flex-end' });
   actions.appendChild(el('button', { class: 'btn btn-g', onclick: calc }, 'See results →'));
@@ -1527,6 +1575,64 @@ function sleepCard() {
   return card;
 }
 
+// Dys-R — dysbiosis-correlate items (TRIM_PLAN §10). A separate lens, NOT part of
+// the GI Symptom Burden score. Mechanistically enriched for microbiome-altered
+// phenotypes; labelled "correlate", validated against stool sequencing at pilot.
+function dysCard() {
+  const card = el('div', { class: 'sec-card' });
+  card.appendChild(el('div', { class: 'sec-head', style: 'background:#185FA5' }, 'Gut-microbiome signals'));
+  const body = el('div', { class: 'sec-body' });
+  body.appendChild(el('div', { class: 'q-sub', style: 'padding-top:8px' },
+    'A few questions that point toward microbiome-related patterns. Reported separately — not part of the GI score, and not a diagnosis.'));
+
+  // Antibiotic courses /12mo (segmented 0–3)
+  body.appendChild(segRow('Antibiotic courses in the last 12 months', ABX_COURSES, () => extras.abxCourses, v => extras.abxCourses = v));
+  // Stool variability (segmented 0–2)
+  body.appendChild(segRow('Does your stool type change a lot day to day?', STOOLVAR_LEVELS, () => extras.dys.stoolVar, v => extras.dys.stoolVar = v));
+  // Foul / excessive gas (segmented 0–3)
+  body.appendChild(segRow('Excessive or foul / sulfur-smelling wind', GAS_LEVELS, () => extras.dys.gasFoul, v => extras.dys.gasFoul = v));
+
+  // Post-infectious onset (chips)
+  body.appendChild(chipRow('Did your gut symptoms first start after food poisoning, a stomach bug, or travel?',
+    POSTINF_OPTS, () => extras.dys.postInfectious, v => extras.dys.postInfectious = v));
+  // Fibre / probiotic paradox (chips)
+  body.appendChild(chipRow('Do fibre, prebiotics, or probiotics make your bloating or gas WORSE?',
+    PARADOX_OPTS, () => extras.dys.fibreParadox, v => extras.dys.fibreParadox = v));
+
+  // Food triggers (multi-select chips)
+  const ftRow = el('div', { class: 'q' });
+  ftRow.appendChild(el('div', { class: 'q-txt', style: 'font-weight:500' }, 'Symptoms reliably triggered by… (select all that apply)'));
+  const ftChips = el('div', { class: 'chips' });
+  FOOD_TRIGGERS.forEach(t => {
+    const on = extras.dys.foodTriggers.includes(t.id);
+    const b = el('button', { class: `chip-opt${on ? ' sel' : ''}`, type: 'button' }, esc(t.label));
+    b.onclick = () => {
+      const i = extras.dys.foodTriggers.indexOf(t.id);
+      if (i >= 0) extras.dys.foodTriggers.splice(i, 1); else extras.dys.foodTriggers.push(t.id);
+      b.classList.toggle('sel');
+    };
+    ftChips.appendChild(b);
+  });
+  ftRow.appendChild(ftChips);
+  body.appendChild(ftRow);
+  card.appendChild(body);
+  return card;
+}
+
+// Generic single-select chip row (value = index). Used by Dys-R yes/no-style items.
+function chipRow(label, options, getter, setter) {
+  const row = el('div', { class: 'q' });
+  row.appendChild(el('div', { class: 'q-txt', style: 'font-weight:500' }, esc(label)));
+  const chips = el('div', { class: 'chips' });
+  options.forEach((lab, v) => {
+    const b = el('button', { class: `chip-opt${getter() === v ? ' sel' : ''}`, type: 'button' }, esc(lab));
+    b.onclick = () => { setter(v); chips.querySelectorAll('.chip-opt').forEach(o => o.classList.remove('sel')); b.classList.add('sel'); };
+    chips.appendChild(b);
+  });
+  row.appendChild(chips);
+  return row;
+}
+
 function redFlagCard() {
   const card = el('div', { class: 'sec-card' });
   card.appendChild(el('div', { class: 'sec-head', style: 'background:#A32D2D' },
@@ -1597,10 +1703,12 @@ function calc() {
     bgAnxiety: answers.bg_anxiety, bgMood: answers.bg_mood,   // folded into psych load
     meds: extras.meds, dietFibre: extras.dietFibre, dietProcessed: extras.dietProcessed,
     alcohol: extras.alcohol, activity: extras.activity,
+    abxCourses: extras.abxCourses, dys: extras.dys,           // Dys-R lens inputs
   };
   const patterns = detectPatterns(score, driverExtras, answers);
   const fired = firedRedFlags(redflags);
-  const tri = triage(score, patterns, fired);
+  const lens = dysbiosisLens(extras);
+  const tri = triage(score, patterns, fired, lens);
 
   const out = document.getElementById('patient-results');
   out.innerHTML = '';
@@ -1639,6 +1747,22 @@ function calc() {
   tcard.appendChild(el('div', { class: 'q-sub', style: 'margin-top:10px;font-style:italic;color:#999' },
     'Clinical guidance for discussion — not a diagnosis or prescription.'));
   out.appendChild(tcard);
+
+  // Dysbiosis-correlate lens — reported SEPARATELY from the burden score
+  // (TRIM_PLAN §10). A signal count + contributing factors; explicitly a
+  // correlate, not a measurement, until validated against stool sequencing.
+  if (lens.count > 0) {
+    const lc = el('div', { class: 'card', style: 'border-left:6px solid #185FA5' });
+    lc.appendChild(el('h2', {}, 'Dysbiosis-correlate signals'));
+    lc.appendChild(el('div', { class: 'row', style: 'align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:4px' },
+      `<span class="pill" style="background:#185FA5;color:#fff">${lens.count} signal${lens.count > 1 ? 's' : ''}</span>
+       <span style="font-size:13px;color:var(--inks)">Separate from your GI Symptom Burden — these point toward a microbiome-related (e.g. fermentation) pattern.</span>`));
+    lc.appendChild(el('ul', { class: 'rf-list', style: 'margin-top:6px' },
+      lens.signals.map(s => `<li>${esc(s.label)}</li>`).join('')));
+    lc.appendChild(el('div', { class: 'q-sub', style: 'margin-top:8px;font-style:italic;color:#999' },
+      'A correlate, not a dysbiosis diagnosis — to be validated against stool testing. Informs the microbiome-support discussion (Tier 3).'));
+    out.appendChild(lc);
+  }
 
   // Live trend preview: if this patient reference has prior visits, show the
   // trajectory now (current visit included as 'unsaved'), so follow-ups show
