@@ -1042,6 +1042,63 @@ return __e;
 };
 
 /* ============================================================================
+   trend.js — longitudinal view (co-design DRAFT). Recomputes each visit's score
+   + patterns from raw answers (so trends always reflect the current model), then
+   derives visit-to-visit deltas and pattern persistence. The whole point is
+   sensitivity: clusters and the overall burden are tracked so a clinician can
+   see improvement or worsening between visits.
+
+   Delta thresholds are PROVISIONAL (refit at pilot, see TRIM_PLAN): a drop in
+   burden is improvement. |Δ| < 5 = stable (noise); 5–9 = slight; ≥10 = meaningful.
+   ========================================================================== */
+__modules['trend.js'] = function(__e){
+const { computeScores } = __req('scoring.js');
+const { detectPatterns } = __req('patterns.js');
+const { pss4Score } = __req('scales.js');
+
+function visitScore(v) {
+  const a = v.answers || {}, ex = v.extras || {};
+  const sc = computeScores(a, { bristol: ex.bristol });
+  const drv = {
+    pss4Score: pss4Score(ex.pss4), bgAnxiety: a.bg_anxiety, bgMood: a.bg_mood,
+    dietFibre: ex.dietFibre, dietProcessed: ex.dietProcessed,
+    bristol: ex.bristol, meds: ex.meds, alcohol: ex.alcohol, activity: ex.activity,
+  };
+  const patterns = detectPatterns(sc, drv, a).map(p => p.id);
+  return {
+    id: v.id, date: v.date || 0, followup: !!v.followup,
+    index: sc.index, band: sc.severity.label, capped: sc.severity.capped,
+    completeness: sc.completeness, clusterNorm: sc.clusterNorm, patterns,
+  };
+}
+
+// Lower burden = improvement. Returns null for the first visit (no prior).
+function deltaLabel(curr, prev) {
+  if (prev == null) return null;
+  const d = curr - prev, ad = Math.abs(d);
+  if (ad < 5) return { dir: 'stable', label: 'Stable', delta: d, color: '#999' };
+  const meaningful = ad >= 10;
+  if (d < 0) return { dir: 'improved', label: meaningful ? 'Improved' : 'Slightly improved', delta: d, color: '#0F6E56' };
+  return { dir: 'worsened', label: meaningful ? 'Worsened' : 'Slightly worse', delta: d, color: '#A32D2D' };
+}
+
+function buildTrend(visits) {
+  const points = (visits || []).slice().sort((a, b) => (a.date || 0) - (b.date || 0)).map(visitScore);
+  points.forEach((p, i) => { p.delta = i > 0 ? deltaLabel(p.index, points[i - 1].index) : null; });
+  // Persistence: patterns that fired on BOTH the latest and the prior visit.
+  let persistent = [];
+  if (points.length >= 2) {
+    const prev = new Set(points[points.length - 2].patterns);
+    persistent = points[points.length - 1].patterns.filter(id => prev.has(id));
+  }
+  return { points, persistent, latest: points[points.length - 1] || null };
+}
+
+__e.visitScore = visitScore; __e.deltaLabel = deltaLabel; __e.buildTrend = buildTrend;
+return __e;
+};
+
+/* ============================================================================
    storage.js — localStorage persistence + export / merge-import. Machinery
    ported from v1 (merge by patient id + visit id = the two-device sync path).
    Visit record shape is generic over the schema, so it survives co-design edits.
@@ -1067,6 +1124,12 @@ function saveDB(db) {
   }
 }
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
+// Find a patient by clinician-assigned reference code (case-insensitive, trimmed).
+function patientByRef(db, ref) {
+  if (!ref) return null;
+  const key = String(ref).trim().toLowerCase();
+  return (db.patients || []).find(p => p.ref && String(p.ref).trim().toLowerCase() === key) || null;
+}
 function normalise(db) {
   if (!db || !Array.isArray(db.patients)) return blankDB();
   return { patients: db.patients, meta: { ...blankDB().meta, ...(db.meta || {}), schemaVersion: SCHEMA_VERSION } };
@@ -1092,7 +1155,7 @@ function mergeImport(currentDb, importedRaw) {
   }
   return { db: cur, added: { patients: addedPatients, visits: addedVisits } };
 }
-__e.blankDB = blankDB; __e.loadDB = loadDB; __e.saveDB = saveDB; __e.uid = uid; __e.exportDB = exportDB; __e.mergeImport = mergeImport;
+__e.blankDB = blankDB; __e.loadDB = loadDB; __e.saveDB = saveDB; __e.uid = uid; __e.patientByRef = patientByRef; __e.exportDB = exportDB; __e.mergeImport = mergeImport;
 
 // ── PILOT / RESEARCH EXPORT ──────────────────────────────────────────────────
 // De-identified, schema-driven CSV: one row per visit, one column per item +
@@ -1172,6 +1235,7 @@ const { el, esc, toast } = __req('util.js');
 const Store = __req('storage.js');
 const { detectPatterns } = __req('patterns.js');
 const { triage } = __req('triage.js');
+const { buildTrend } = __req('trend.js');
 
 let answers = {};      // id -> value (absent = unanswered)
 let redflags = {};     // rf_id -> bool
@@ -1182,27 +1246,147 @@ const blankExtras = () => ({
   dietFibre: null, dietProcessed: null, alcohol: null, activity: null,
 });
 let extras = blankExtras();
+// Session: a clinician-assigned patient reference (de-identified — a code, not a
+// name) + whether this is a follow-up. Drives visit linking, the recall window,
+// and the longitudinal trend view. `ref` persists across reset() so a clinician
+// can run baseline then follow-up in one sitting without retyping.
+let session = { ref: '', followup: false };
 
-function reset() { answers = {}; redflags = {}; extras = blankExtras(); }
+function reset() { answers = {}; redflags = {}; extras = blankExtras(); session.followup = false; }
 
-// Save the current visit to localStorage so the pilot CSV has data to export.
-// The clinician/database surface is deferred, so every saved visit is its own
-// anonymous patient (a fresh pseudo-id) — no PII, no cross-visit linking from
-// this surface. The pilot export anonymises further (P1, P2, …); the stored
-// patient id is just a key for the storage layer's merge logic.
-function saveVisit() {
-  const db = Store.loadDB();
-  const visit = {
+// Save the current visit to localStorage. If a patient reference is set, the
+// visit is appended to that patient (so follow-ups accumulate and the trend
+// view works); otherwise it's a standalone anonymous patient. The reference is a
+// de-identified clinician code, never a name. Returns the patient's full visit
+// list so the caller can render the trend immediately.
+// The in-progress visit as a storable record (fresh id/date each call).
+function currentVisit() {
+  return {
     id: Store.uid(),
     date: Date.now(),
+    followup: !!session.followup,
     answers: { ...answers },                       // includes 'na' values as-is
     extras: JSON.parse(JSON.stringify(extras)),    // deep-clone (pss4 array, meds object)
     redflags: { ...redflags },
   };
-  db.patients.push({ id: Store.uid(), visits: [visit] });
+}
+
+// Prior saved visits for the current patient reference (empty if none / no ref).
+function priorVisits() {
+  const ref = (session.ref || '').trim();
+  if (!ref) return [];
+  const p = Store.patientByRef(Store.loadDB(), ref);
+  return (p && p.visits) ? p.visits.slice() : [];
+}
+
+function saveVisit() {
+  const db = Store.loadDB();
+  const visit = currentVisit();
+  const ref = (session.ref || '').trim();
+  let patient = ref ? Store.patientByRef(db, ref) : null;
+  if (patient) {
+    patient.visits = patient.visits || [];
+    patient.visits.push(visit);
+  } else {
+    patient = { id: Store.uid(), ref: ref || null, visits: [visit] };
+    db.patients.push(patient);
+  }
   const saved = Store.saveDB(db);
   if (!saved) throw new Error('Storage write failed — response was not saved.');
-  return visit.id;
+  return { id: visit.id, visits: patient.visits.slice(), linked: !!ref };
+}
+
+// Recall window narrows on follow-ups so the screen is sensitive to recent change.
+function recallNote() {
+  return session.followup
+    ? 'This is a follow-up — answer for how things have been SINCE YOUR LAST VISIT.'
+    : RECALL_NOTE;
+}
+
+// Session card: de-identified patient reference + follow-up toggle. Optional —
+// leaving the reference blank saves a standalone anonymous visit as before.
+function sessionCard() {
+  const card = el('div', { class: 'sec-card' });
+  card.appendChild(el('div', { class: 'sec-head', style: 'background:#3A4A5A' }, 'Visit details (optional)'));
+  const body = el('div', { class: 'sec-body' });
+  body.appendChild(el('div', { class: 'q-sub', style: 'padding-top:8px' },
+    'A patient reference links repeat visits so progress can be tracked. Use a code, not a name (de-identified).'));
+  const row = el('div', { class: 'q' });
+  row.appendChild(el('div', { class: 'q-txt', style: 'font-weight:500' }, 'Patient reference (code)'));
+  const input = el('input', { type: 'text', value: session.ref || '', placeholder: 'e.g. P-1042',
+    style: 'padding:8px 10px;border:1px solid #C9D2DC;border-radius:6px;font-size:14px;width:160px' });
+  input.oninput = () => { session.ref = input.value; };
+  row.appendChild(input);
+  body.appendChild(row);
+  // Follow-up toggle
+  const fu = el('div', { class: 'q', style: 'align-items:center' });
+  fu.appendChild(el('div', { class: 'q-txt', style: 'font-weight:500' }, 'This is a follow-up visit'));
+  const toggle = el('button', { class: `chip-opt${session.followup ? ' sel' : ''}`, type: 'button' },
+    session.followup ? 'Follow-up ✓' : 'Baseline');
+  toggle.onclick = () => {
+    session.followup = !session.followup;
+    toggle.classList.toggle('sel');
+    toggle.textContent = session.followup ? 'Follow-up ✓' : 'Baseline';
+    render(); // re-render so the recall note under each section updates
+  };
+  fu.appendChild(toggle);
+  body.appendChild(fu);
+  card.appendChild(body);
+  return card;
+}
+
+// Longitudinal trend card — burden + cluster trajectory across this patient's
+// visits, with visit-to-visit delta and pattern persistence. `markLastUnsaved`
+// labels the final point as the current in-progress (preview) visit.
+function trendCard(visits, markLastUnsaved) {
+  const { points, persistent, latest } = buildTrend(visits);
+  const card = el('div', { class: 'card', id: 'trend-card', style: 'border-left:6px solid #185FA5' });
+  card.appendChild(el('h2', {}, 'Progress over time'));
+  card.appendChild(el('div', { class: 'q-sub' },
+    `${points.length} visit${points.length > 1 ? 's' : ''}${session.ref ? ' · ' + esc((session.ref || '').trim()) : ''}. Lower GI Symptom Burden = improvement.`));
+
+  // Headline delta vs previous visit.
+  if (latest && latest.delta) {
+    const d = latest.delta;
+    card.appendChild(el('div', { class: 'row', style: 'align-items:center;gap:10px;margin:8px 0;flex-wrap:wrap' },
+      `<span class="pill" style="background:${d.color};color:#fff">${esc(d.label)}</span>
+       <span style="font-size:13px;color:var(--inks)">Burden ${d.delta > 0 ? '+' : ''}${d.delta} pts vs previous visit (${points[points.length - 2].index}% → ${latest.index}%)</span>`));
+  }
+
+  // Per-visit rows: date, index + band, delta.
+  const tbl = el('div', { style: 'margin-top:8px' });
+  points.forEach((p, i) => {
+    const isLast = i === points.length - 1;
+    const dateStr = p.date ? new Date(p.date).toISOString().slice(0, 10) : '—';
+    const tag = (isLast && markLastUnsaved) ? ' <span class="opt-tag">current · unsaved</span>'
+      : (p.followup ? ' <span class="opt-tag">follow-up</span>' : ' <span class="opt-tag">baseline</span>');
+    const deltaTxt = p.delta ? `<span style="color:${p.delta.color};font-weight:600">${esc(p.delta.label)}</span>` : '<span class="muted">—</span>';
+    tbl.appendChild(el('div', { class: 'bar-row', style: 'display:flex;justify-content:space-between;gap:10px;padding:4px 0' },
+      `<span>${esc(dateStr)}${tag}</span><span><b>${p.index}%</b> <span class="muted">${esc(p.band)}</span> · ${deltaTxt}</span>`));
+  });
+  card.appendChild(tbl);
+
+  // Cluster trajectory (first → latest), so symptom shape change is visible.
+  if (points.length >= 2) {
+    const first = points[0].clusterNorm || {}, last = latest.clusterNorm || {};
+    const order = ['Reflux', 'Pain', 'Indigestion', 'Diarrhoea', 'Constipation'];
+    const rows = order.filter(k => first[k] != null || last[k] != null).map(k => {
+      const f = first[k] == null ? '—' : Math.round(first[k] * 100) + '%';
+      const l = last[k] == null ? '—' : Math.round(last[k] * 100) + '%';
+      return `<div class="bar-row" style="display:flex;justify-content:space-between;padding:2px 0"><span class="muted">↳ ${esc(k)}</span><span class="muted">${f} → ${l}</span></div>`;
+    }).join('');
+    if (rows) {
+      card.appendChild(el('div', { class: 'q-sub', style: 'margin-top:10px;font-weight:600' }, 'GI clusters (first → latest)'));
+      card.appendChild(el('div', {}, rows));
+    }
+  }
+
+  // Pattern persistence — fired on the latest AND the prior visit.
+  if (persistent.length) {
+    card.appendChild(el('div', { class: 'q-sub', style: 'margin-top:10px' },
+      `Persistent patterns (2+ consecutive visits): <b>${persistent.map(id => esc(id.replace(/_/g, ' '))).join(', ')}</b>`));
+  }
+  return card;
 }
 
 function render() {
@@ -1211,6 +1395,8 @@ function render() {
   root.appendChild(el('div', { class: 'intro' },
     `<b>Gut Health Screen (v2).</b> A clean-slate screening instrument under co-design. ` +
     `This is an educational screening tool, not a diagnosis.`));
+
+  root.appendChild(sessionCard());
 
   if (RED_FLAGS.length) root.appendChild(redFlagCard());
 
@@ -1226,7 +1412,7 @@ function render() {
     card.appendChild(el('div', { class: 'sec-head', style: `background:${sec.color || '#0F6E56'}` },
       `${esc(sec.full || sec.label)} <span style="opacity:.8;font-weight:500">${questionsOf(sec.id).length} items</span>`));
     const body = el('div', { class: 'sec-body' });
-    if (!sec.noRecall) body.appendChild(el('div', { class: 'q-sub', style: 'padding-top:8px' }, esc(RECALL_NOTE)));
+    if (!sec.noRecall) body.appendChild(el('div', { class: 'q-sub', style: 'padding-top:8px' }, esc(recallNote())));
     questionsOf(sec.id).forEach(q => body.appendChild(questionRow(q)));
     card.appendChild(body);
     root.appendChild(card);
@@ -1477,6 +1663,12 @@ function calc() {
     'Clinical guidance for discussion — not a diagnosis or prescription.'));
   out.appendChild(tcard);
 
+  // Live trend preview: if this patient reference has prior visits, show the
+  // trajectory now (current visit included as 'unsaved'), so follow-ups show
+  // improvement/worsening before the clinician even saves.
+  const prior = priorVisits();
+  if (prior.length >= 1) out.appendChild(trendCard(prior.concat([currentVisit()]), true));
+
   const bars = el('div', { class: 'card' });
   bars.appendChild(el('h2', {}, 'By domain'));
   SECTIONS.forEach(s => {
@@ -1549,9 +1741,14 @@ function calc() {
   const saveBtn = el('button', { class: 'btn btn-g', type: 'button' }, 'Save this response');
   saveBtn.onclick = () => {
     try {
-      const vid = saveVisit();
+      const r = saveVisit();
       saveBtn.disabled = true; saveBtn.textContent = 'Saved ✓';
-      toast('Response saved. Visit ID ' + vid.slice(0, 6) + '…');
+      toast(r.linked
+        ? `Saved as visit ${r.visits.length} for ${(session.ref || '').trim()}.`
+        : 'Response saved (standalone — add a patient reference to track progress).');
+      // Re-point the trend card at the now-persisted series (drops the "unsaved" tag).
+      const existing = out.querySelector('#trend-card');
+      if (r.visits.length >= 2) { const fresh = trendCard(r.visits, false); existing ? existing.replaceWith(fresh) : out.appendChild(fresh); }
     } catch (e) { toast('Could not save: ' + (e && e.message || 'storage error')); }
   };
   actions.appendChild(saveBtn);
