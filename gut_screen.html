@@ -757,8 +757,17 @@ const { psychLoadScore, dietBurden } = __req('scales.js');
 
 // Helpers: each evaluator returns { fires, signals } so callers can compute a
 // data-coverage confidence without re-checking the same conditions.
-const ge = (v, t) => v != null && v >= t;
-const le = (v, t) => v != null && v <= t;
+// Each signal is {a: was-answered, t: passed-threshold-given-data}. The pattern's
+// `fires` logic reads .t; CONFIDENCE reads .a (i.e. data coverage, NOT how
+// strongly the data corroborates). Strength-of-corroboration is exposed
+// separately on the engine output so it can be displayed (under a different
+// label) without conflating the two.
+const sig = (v, ok) => ({ a: v != null, t: v != null && ok(v) });
+const ge  = (v, t)  => sig(v, x => x >= t);
+const le  = (v, t)  => sig(v, x => x <= t);
+// Driver booleans (e.g. meds toggles) need to distinguish "card not opened" from
+// "answered no" — pass the *carrier object* so we can read both facts.
+const hasFlag = (carrier, val) => carrier == null ? { a: false, t: false } : { a: true, t: !!val };
 const clu = (s, k) => (s.clusterNorm && s.clusterNorm[k] != null) ? s.clusterNorm[k] : null;
 const gi  = (s) => (s.secNorm && s.secNorm.GI != null) ? s.secNorm.GI : null;
 // Individual item value (id-map answers); 'na'/blank → null so they never count.
@@ -772,9 +781,9 @@ const PATTERNS = [
     eval: (s, ex) => {
       const constipCluster = ge(clu(s, 'Constipation'), 0.4);
       const slowStool      = le(ex.bristol, 2);
-      const notDiarrhoea   = !ge(clu(s, 'Diarrhoea'), 0.3);
-      const signals = [constipCluster, slowStool, notDiarrhoea];
-      return { fires: (constipCluster || slowStool) && notDiarrhoea, signals };
+      const diarrCluster   = ge(clu(s, 'Diarrhoea'), 0.3); // signal of interest is "diarrhoea high"; fires uses its negation
+      const signals = [constipCluster, slowStool, diarrCluster];
+      return { fires: (constipCluster.t || slowStool.t) && !diarrCluster.t, signals };
     },
   },
   {
@@ -782,11 +791,11 @@ const PATTERNS = [
     label: 'Loose-stool / urgency pattern',
     desc: 'Bowel-movement burden weighted toward urgency or loose stools. Worth screening with your clinician for triggers and infection.',
     eval: (s, ex) => {
-      const diarrCluster = ge(clu(s, 'Diarrhoea'), 0.4);
-      const fastStool    = ge(ex.bristol, 6);
-      const notConstip   = !ge(clu(s, 'Constipation'), 0.3);
-      const signals = [diarrCluster, fastStool, notConstip];
-      return { fires: (diarrCluster || fastStool) && notConstip, signals };
+      const diarrCluster   = ge(clu(s, 'Diarrhoea'), 0.4);
+      const fastStool      = ge(ex.bristol, 6);
+      const constipCluster = ge(clu(s, 'Constipation'), 0.3);
+      const signals = [diarrCluster, fastStool, constipCluster];
+      return { fires: (diarrCluster.t || fastStool.t) && !constipCluster.t, signals };
     },
   },
   {
@@ -798,7 +807,7 @@ const PATTERNS = [
       const diarr   = ge(clu(s, 'Diarrhoea'), 0.3);
       const urgency = ge(clu(s, 'Pain'), 0.3); // pain/cramping often accompanies alternating bowel
       const signals = [constip, diarr, urgency];
-      return { fires: constip && diarr, signals }; // exactly the case the single-direction patterns suppress
+      return { fires: constip.t && diarr.t, signals }; // exactly the case the single-direction patterns suppress
     },
   },
   {
@@ -808,9 +817,9 @@ const PATTERNS = [
     eval: (s, ex) => {
       const reflux = ge(clu(s, 'Reflux'), 0.4);
       const indig  = ge(clu(s, 'Indigestion'), 0.5); // confidence signal only — Indigestion now owns the bloating pattern
-      const ppi    = !!(ex.meds && ex.meds.ppi);
+      const ppi    = hasFlag(ex.meds, ex.meds && ex.meds.ppi);
       const signals = [reflux, indig, ppi];
-      return { fires: reflux, signals };
+      return { fires: reflux.t, signals };
     },
   },
   {
@@ -818,11 +827,11 @@ const PATTERNS = [
     label: 'Bloating / gas-predominant pattern',
     desc: 'Bloating, gas and fullness are prominent — a fermentation-type picture sometimes linked to SIBO. Meal timing, fermentable-carb triggers, and breath testing are worth discussing with your clinician.',
     eval: (s, ex, a) => {
-      const indig    = ge(clu(s, 'Indigestion'), 0.5);
-      const bloating = ge(av(a, 'gsrs_bloating'), 2);
+      const indig     = ge(clu(s, 'Indigestion'), 0.5);
+      const bloating  = ge(av(a, 'gsrs_bloating'), 2);
       const foodReact = ge(av(a, 'im_food_react'), 2);
       const signals = [indig, bloating, foodReact];
-      return { fires: indig, signals };
+      return { fires: indig.t, signals };
     },
   },
   {
@@ -836,7 +845,7 @@ const PATTERNS = [
       const cravings = ge(av(a, 'me_cravings'), 2);
       const nails    = ge(av(a, 'sk_nails'), 2);
       const signals = [thrush, yeast, itch, cravings, nails];
-      return { fires: signals.filter(Boolean).length >= 2, signals };
+      return { fires: signals.filter(x => x.t).length >= 2, signals };
     },
   },
   {
@@ -848,7 +857,7 @@ const PATTERNS = [
       const allergies = ge(av(a, 'im_allergies'), 2);
       const headache  = ge(av(a, 'bg_headache'), 2);
       const signals = [histamine, allergies, headache];
-      return { fires: histamine, signals };
+      return { fires: histamine.t, signals };
     },
   },
   {
@@ -861,9 +870,9 @@ const PATTERNS = [
       const iron   = ge(av(a, 'nu_iron'), 2);
       const mouth  = ge(av(a, 'nu_mouth'), 2);
       const giPresent = ge(gi(s), 0.2);
-      const nuCount = [known, hair, iron, mouth].filter(Boolean).length;
+      const nuCount = [known, hair, iron, mouth].filter(x => x.t).length;
       const signals = [known, hair, iron, mouth, giPresent];
-      return { fires: nuCount >= 2 && giPresent, signals };
+      return { fires: nuCount >= 2 && giPresent.t, signals };
     },
   },
   {
@@ -875,7 +884,7 @@ const PATTERNS = [
       const psych = psychLoadScore({ pss4Score: ex.pss4Score, bgAnxiety: ex.bgAnxiety, bgMood: ex.bgMood });
       const highPsych = ge(psych, 50);
       const signals = [giPresent, highPsych];
-      return { fires: giPresent && highPsych, signals };
+      return { fires: giPresent.t && highPsych.t, signals };
     },
   },
   {
@@ -883,10 +892,10 @@ const PATTERNS = [
     label: 'Recent gut-disruptor pattern',
     desc: 'Recent antibiotic, acid-blocker, or NSAID use can shift the microbiome. A recovery-supportive window of a few months is usually appropriate — discuss with your clinician.',
     eval: (s, ex) => {
-      const anyDisruptor = !!(ex.meds && (ex.meds.abx || ex.meds.ppi || ex.meds.nsaid));
+      const anyDisruptor = hasFlag(ex.meds, ex.meds && (ex.meds.abx || ex.meds.ppi || ex.meds.nsaid));
       const giPresent = ge(gi(s), 0.2);
       const signals = [anyDisruptor, giPresent];
-      return { fires: anyDisruptor && giPresent, signals };
+      return { fires: anyDisruptor.t && giPresent.t, signals };
     },
   },
   {
@@ -894,11 +903,11 @@ const PATTERNS = [
     label: 'Inflammatory / immune-leaning pattern',
     desc: 'Food reactions, histamine-type symptoms, or atopy alongside gut symptoms. Worth identifying triggers with your clinician (e.g. a structured elimination trial).',
     eval: (s, ex) => {
-      const im = s.secNorm && s.secNorm.IM;
-      const imHigh = ge(im, 0.4);
+      const imNorm = s.secNorm && s.secNorm.IM;
+      const imHigh = ge(imNorm, 0.4);
       const giPresent = ge(gi(s), 0.25);
       const signals = [imHigh, giPresent];
-      return { fires: imHigh && giPresent, signals };
+      return { fires: imHigh.t && giPresent.t, signals };
     },
   },
   {
@@ -911,15 +920,17 @@ const PATTERNS = [
       const alcHigh = ge(ex.alcohol, 2);
       const lowAct  = le(ex.activity, 1);
       const signals = [dietBad, alcHigh, lowAct];
-      return { fires: signals.filter(Boolean).length >= 2, signals };
+      return { fires: signals.filter(x => x.t).length >= 2, signals };
     },
   },
 ];
 
+// Ratio-based bands — comparable across patterns regardless of how many signals
+// each pattern lists. Confidence is data coverage (answered / total).
 const CONFIDENCE_BANDS = [
-  { min: 3, label: 'High',     color: '#0F6E56' },
-  { min: 2, label: 'Moderate', color: '#BA7517' },
-  { min: 0, label: 'Low',      color: '#999' },
+  { min: 0.75, label: 'High',     color: '#0F6E56' },
+  { min: 0.5,  label: 'Moderate', color: '#BA7517' },
+  { min: 0,    label: 'Low',      color: '#999' },
 ];
 
 function detectPatterns(score, ex, answers) {
@@ -929,11 +940,20 @@ function detectPatterns(score, ex, answers) {
   for (const p of PATTERNS) {
     const r = p.eval(score, ex_, a);
     if (!r.fires) continue;
-    const hits = r.signals.filter(Boolean).length;
-    const conf = CONFIDENCE_BANDS.find(c => hits >= c.min);
-    fired.push({ id: p.id, label: p.label, desc: p.desc, confidence: conf.label, confColor: conf.color, signalHits: hits });
+    const total    = r.signals.length;
+    const answered = r.signals.filter(x => x.a).length;
+    const hits     = r.signals.filter(x => x.t).length;
+    const coverage = total > 0 ? answered / total : 0;
+    const strength = total > 0 ? hits / total     : 0;
+    const conf = CONFIDENCE_BANDS.find(c => coverage >= c.min);
+    fired.push({
+      id: p.id, label: p.label, desc: p.desc,
+      confidence: conf.label, confColor: conf.color,
+      coverage, strength,                              // 0–1 ratios; different concepts
+      signalAnswered: answered, signalHits: hits, signalTotal: total,
+    });
   }
-  // Stable order by engine priority then confidence (High > Mod > Low).
+  // Stable order by confidence (data we have), then engine priority.
   const order = ['High', 'Moderate', 'Low'];
   return fired.sort((a, b) => order.indexOf(a.confidence) - order.indexOf(b.confidence));
 }
