@@ -158,3 +158,75 @@ Cutting *screen* domains is low-risk for the headline band: the Index is
 GI-core-weighted and screen domains are capped, so removing SL/OR/HR/ME shifts the
 overall % only slightly and never changes the GI-dominance logic. The main effect
 is a shorter, sharper, more clearly *gut-focused* instrument.
+
+## 10. Dysbiosis-correlate lens (Dys-R items) — specificity upgrade
+
+### 10.1 The gap and the constraint
+
+GSRS measures GI-symptom **severity**, which is only weakly specific to dysbiosis
+(severe IBS-C with an ordinary microbiome scores like antibiotic-shattered
+diversity). But **"dysbiosis" has no symptom-based gold standard**, so no item can
+be *validated* as dysbiosis-specific without correlating it against stool
+sequencing. Achievable goal: add items **mechanistically enriched** for
+microbiome-altered phenotypes, keep them in a **separate lens** from the severity
+score, and validate against any stool data the pilot collects.
+
+### 10.2 Architecture — a parallel lens, NOT part of the burden score
+
+Dys-R items feed a distinct **"Dysbiosis-correlate / fermentation-phenotype"**
+indicator reported *alongside* (never inside) GI Symptom Burden:
+
+> GI Symptom Burden: 45% · *Dysbiosis-correlate signals: 3 (fermentation-type,
+> post-infectious onset, recent antibiotics)*
+
+This preserves the reframe's honesty (severity stays severity), directly sharpens
+**Triage Tier 3** (microbiome-support candidacy), and strengthens the
+`bloating_fermentation` and `post_disruptor` patterns. Until validated against
+sequencing, the lens is labelled **"correlate," never a dysbiosis measurement.**
+
+### 10.3 Recommended items (4 new + 2 field upgrades)
+
+**Enhancements to existing fields:**
+
+| id | Item text | Response | Tier | Feeds |
+|---|---|---|---|---|
+| `dys_stool_var` | "Does your stool type change a lot from day to day (hard one day, loose the next)?" | Never / Sometimes / Often (0–2) | A | mixed_bowel + lens (also derivable across visits via trend) |
+| `dys_abx_courses` | "How many courses of antibiotics in the last 12 months?" (upgrades the abx boolean) | 0 / 1 / 2 / 3+ (0–3) | A | post_disruptor (dose-response) → Tier 3 |
+
+**Net-new items:**
+
+| id | Item text | Response | Tier | Feeds |
+|---|---|---|---|---|
+| `dys_postinfectious` | "Did your gut symptoms first start after food poisoning, a stomach bug, or travel?" | No / Yes / Not sure | B | lens → Tier 3 *(highest-value add)* |
+| `dys_food_triggers` | "Are your symptoms reliably triggered by any of these? (select all)" — Onion/garlic · Beans/lentils · Wheat/bread · Dairy · Sugar-free ('-ol') sweeteners · None | multi-select; score = count | B | bloating_fermentation + lens (absorbs separate lactose/fructose/wheat items) |
+| `dys_gas_foul` | "Is your wind excessive, or foul / sulfur-smelling ('rotten egg')?" | Not at all → Marked (0–3) | B | bloating_fermentation + lens |
+| `dys_fibre_paradox` | "Do fibre, prebiotics, or probiotic supplements make your bloating or gas WORSE?" | No / Yes / Haven't tried | B | bloating_fermentation (fermentation/SIBO phenotype) |
+
+Tier A = strongest stool/microbiome correlates (stool transit/instability is the
+#1 covariate of composition; disruptor exposure is a causal antecedent). Tier B =
+moderate, mechanistically grounded, not currently captured.
+
+### 10.4 Count impact
+
++4 new items +2 field upgrades, all in the lens (out of the burden score). Set
+against the ~20 low-information items removed in §3–§6, this is still a **net
+reduction** (≈30 + 4 ≈ 34 scored, vs 52) with a large specificity gain —
+severity-noise traded for dysbiosis-signal.
+
+### 10.5 Validation plan (gates any "dysbiosis" claim)
+
+The pilot CSV already exports per-item data. Once stool sequencing is available
+for a subset:
+- Test each Dys-R item's correlation with sequencing-defined dysbiosis markers
+  (richness/diversity, Enterobacteriaceae, H2S producers, methanogens).
+- **Keep** items that correlate; **drop** those that don't (same evidence
+  discipline as §7).
+- Only after this may the lens graduate from "correlate" to a quantified
+  microbiome-risk readout.
+
+### 10.6 Open question for sign-off
+
+Whether to surface the lens as a **signal count** (e.g. "3 dysbiosis-correlate
+signals") or a **named phenotype** (e.g. "fermentation-type"). Recommend starting
+with the count + contributing-signal list (conservative, transparent) and adding
+phenotype labels only once §10.5 validation supports them.
