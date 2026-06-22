@@ -396,7 +396,20 @@ return __e;
    ========================================================================== */
 __modules['redflags.js'] = function(__e){
 const RED_FLAGS = [
-  // (co-design output — e.g. bleeding, weight loss, nocturnal symptoms, etc.)
+  // Lower-GI / colorectal alarm features
+  { id: 'rf_bleeding',   label: 'Blood in your stool, rectal bleeding, or black tarry stools' },
+  { id: 'rf_weightloss', label: 'Unintentional weight loss' },
+  { id: 'rf_nocturnal',  label: 'Gut symptoms that wake you from sleep at night' },
+  { id: 'rf_newonset50', label: 'A new, persistent change in bowel habit starting after age 50' },
+  { id: 'rf_mass',       label: 'A lump or mass you (or a doctor) can feel in your abdomen' },
+  { id: 'rf_famhist',    label: 'Family history of bowel/colorectal cancer or IBD (close relative, especially under 50)' },
+  // Upper-GI alarm features
+  { id: 'rf_dysphagia',  label: 'Difficulty or pain when swallowing' },
+  { id: 'rf_vomiting',   label: 'Persistent vomiting, or vomiting blood / coffee-ground material' },
+  // Systemic / other
+  { id: 'rf_anaemia',    label: 'Diagnosed iron-deficiency anaemia without a clear cause' },
+  { id: 'rf_jaundice',   label: 'Yellowing of the skin or eyes (jaundice)' },
+  { id: 'rf_fever',      label: 'Fever accompanying your gut symptoms' },
 ];
 function anyRedFlag(answers) { return !!answers && RED_FLAGS.some(f => answers[f.id] === true); }
 function firedRedFlags(answers) { return answers ? RED_FLAGS.filter(f => answers[f.id] === true) : []; }
