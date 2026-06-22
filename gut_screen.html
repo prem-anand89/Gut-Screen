@@ -625,8 +625,26 @@ function bandForPct(pct, coreLow) {
 // denominator unless actually answered, and 'na' items are excluded from the
 // score AND the denominator entirely — so skipping items that don't apply to
 // you never makes the result read as incomplete (the gender/age requirement).
-function computeScores(answers) {
+// Bristol stool form as a DUAL-ROLE factor (co-design): the raw type is still
+// tracked separately as a modifiable driver, AND a bounded transit-deviation
+// signal feeds the GI core. Signal = |type − 4| / 3 (type 4 ideal → 0; types 1
+// and 7 → 1), U-shaped because both constipation and diarrhoea are abnormal.
+// Added to the GI norm as a ONE-DIRECTIONAL nudge of up to BRISTOL_ALPHA: an
+// abnormal stool can raise GI burden, but a normal stool never discounts a
+// symptomatic questionnaire (a coincidentally-perfect stool must not mask
+// reported symptoms). The cap is deliberately < the 0.20 coreLow threshold so a
+// bad stool form ALONE can never lift the GI core out of "low" — it augments the
+// questionnaire, it can't override it.
+const BRISTOL_ALPHA = 0.15;
+function bristolTransit(b) {
+  return (typeof b === 'number') ? Math.abs(b - 4) / 3 : null; // 0–1, null if absent
+}
+
+// answers: id-map OR positional array. opts.bristol (1–7) optionally feeds the
+// GI core via bristolTransit() — see BRISTOL_ALPHA note above.
+function computeScores(answers, opts) {
   const raw = Array.isArray(answers) ? (id) => answers[QID[id]] : (id) => answers[id];
+  const bristolSignal = bristolTransit(opts && opts.bristol);
 
   const secScores = {}, secNorm = {}, bands = {}, secAnswered = {}, secApplicableMax = {};
   let answeredItems = 0, scoredItems = 0;
@@ -646,7 +664,12 @@ function computeScores(answers) {
     secApplicableMax[sec.id] = maxSum;
     secAnswered[sec.id] = { answered: n, of: qs.length };
     bands[sec.id] = maxSum ? Math.min(3, Math.floor(sum / maxSum * 4)) : 0;
-    const norm = maxSum > 0 ? sum / maxSum : null; // domain MEAN over APPLICABLE items, 0–1
+    let norm = maxSum > 0 ? sum / maxSum : null; // domain MEAN over APPLICABLE items, 0–1
+    // Dual-role Bristol: nudge the GI core only when the GI questionnaire itself
+    // was answered (Bristol augments, it never substitutes for, the items).
+    if (sec.id === 'GI' && norm != null && bristolSignal != null) {
+      norm = Math.min(1, norm + BRISTOL_ALPHA * bristolSignal);
+    }
     secNorm[sec.id] = norm;
     scoredItems += denom; answeredItems += n;
     if (norm != null) (sec.role === 'core' ? coreNorms : screenNorms).push(norm);
@@ -670,7 +693,7 @@ function computeScores(answers) {
       : ''),
   });
 
-  return { secScores, secNorm, secApplicableMax, bands, secAnswered, completeness, index, severity };
+  return { secScores, secNorm, secApplicableMax, bands, secAnswered, completeness, index, severity, bristolSignal };
 }
 
 // Shared confidence descriptor (Phase 0.5 §3 mechanism).
@@ -686,6 +709,7 @@ function scoreConfidence(scoreObj) {
 }
 
 __e.BANDS = BANDS; __e.computeScores = computeScores; __e.scoreConfidence = scoreConfidence;
+__e.BRISTOL_ALPHA = BRISTOL_ALPHA; __e.bristolTransit = bristolTransit;
 return __e;
 };
 
@@ -810,7 +834,7 @@ function bristolCard() {
   const card = el('div', { class: 'sec-card' });
   card.appendChild(el('div', { class: 'sec-head', style: 'background:#6B4A2E' }, 'Stool type (Bristol scale)'));
   const body = el('div', { class: 'sec-body' });
-  body.appendChild(el('div', { class: 'q-sub', style: 'padding-top:8px' }, 'Pick the type that best matches your usual stool. (Not part of the score.)'));
+  body.appendChild(el('div', { class: 'q-sub', style: 'padding-top:8px' }, 'Pick the type that best matches your usual stool. Tracked over time, and gently feeds your gut-core score (capped so it can’t dominate).'));
   const grid = el('div', { class: 'bristol-grid' });
   BRISTOL_TYPES.forEach(t => {
     const b = el('button', { class: `bristol-opt${extras.bristol === t.n ? ' sel' : ''}`, type: 'button' },
@@ -973,7 +997,7 @@ function questionRow(q) {
 
 function calc() {
   const answerArr = QUESTIONS.map(q => (answers[q.id] == null ? null : answers[q.id]));
-  const score = computeScores(answerArr);
+  const score = computeScores(answerArr, { bristol: extras.bristol }); // Bristol dual-role: also nudges GI core
   const sv = score.severity;
   const conf = scoreConfidence(score);
 
