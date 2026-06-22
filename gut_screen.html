@@ -1342,6 +1342,53 @@ function sessionCard() {
   return card;
 }
 
+// Severity × microbiome-risk matrix (TRIM_PLAN §10). Combines the two
+// INDEPENDENT reads — GI Symptom Burden (severity) and the dysbiosis-correlate
+// lens (count) — at the interpretation layer, WITHOUT contaminating either
+// metric. Severity axis: Low = Minimal/Mild–Moderate, High = Significant/Severe.
+// Microbiome-risk axis: High = ≥2 correlate signals (the Tier-3 threshold).
+function riskMatrixCard(severity, lens) {
+  const sevHigh  = severity.label === 'Significant' || severity.label === 'Severe';
+  const riskHigh = lens.count >= 2;
+  const CELLS = {
+    LL: { t: 'Reassure & monitor',                    c: '#0F6E56' },
+    LH: { t: 'Early / post-disruptor — watch & support', c: '#BA7517' },
+    HL: { t: 'Symptom-led management',                c: '#C2622E' },
+    HH: { t: 'Strong microbiome-support candidate',   c: '#A32D2D' },
+  };
+  const activeKey = (sevHigh ? 'H' : 'L') + (riskHigh ? 'H' : 'L');
+  const card = el('div', { class: 'card', style: 'border-left:6px solid #185FA5' });
+  card.appendChild(el('h2', {}, 'Severity × microbiome-risk'));
+  card.appendChild(el('div', { class: 'row', style: 'gap:10px;flex-wrap:wrap;margin-bottom:8px' },
+    `<span class="pill ${severity.cls}">Severity: ${severity.index}% · ${esc(severity.label)}</span>
+     <span class="pill" style="background:#185FA5;color:#fff">Microbiome-risk: ${lens.count}/6 · ${riskHigh ? 'High' : 'Low'}</span>`));
+
+  const grid = el('div', { style: 'display:grid;grid-template-columns:96px 1fr 1fr;gap:4px;font-size:12px;margin-top:4px' });
+  grid.appendChild(el('div', {}, ''));
+  grid.appendChild(el('div', { style: 'font-weight:600;text-align:center;color:var(--inks)' }, 'Low microbiome-risk'));
+  grid.appendChild(el('div', { style: 'font-weight:600;text-align:center;color:var(--inks)' }, 'High microbiome-risk'));
+  [['High severity', 'H'], ['Low severity', 'L']].forEach(([rlab, rs]) => {
+    grid.appendChild(el('div', { style: 'font-weight:600;display:flex;align-items:center;color:var(--inks)' }, rlab));
+    ['L', 'H'].forEach(cs => {
+      const k = rs + cs, cell = CELLS[k], active = k === activeKey;
+      grid.appendChild(el('div', { style:
+        `padding:8px;border-radius:6px;text-align:center;line-height:1.3;` +
+        `background:${active ? cell.c : '#F2F4F7'};color:${active ? '#fff' : '#8A93A0'};` +
+        `font-weight:${active ? '600' : '400'};border:${active ? '2px solid ' + cell.c : '1px solid #E1E5EB'}` },
+        esc(cell.t) + (active ? ' ◀ you' : '')));
+    });
+  });
+  card.appendChild(grid);
+
+  if (lens.count > 0) {
+    card.appendChild(el('div', { class: 'q-sub', style: 'margin-top:10px;font-weight:600' }, 'Microbiome-correlate signals:'));
+    card.appendChild(el('ul', { class: 'rf-list' }, lens.signals.map(s => `<li>${esc(s.label)}</li>`).join('')));
+  }
+  card.appendChild(el('div', { class: 'q-sub', style: 'margin-top:8px;font-style:italic;color:#999' },
+    'Two independent reads — symptom severity (GI score) and a microbiome-correlate count (NOT a dysbiosis diagnosis; validate against stool testing). For discussion, not prescription.'));
+  return card;
+}
+
 // Longitudinal trend card — burden + cluster trajectory across this patient's
 // visits, with visit-to-visit delta and pattern persistence. `markLastUnsaved`
 // labels the final point as the current in-progress (preview) visit.
@@ -1755,21 +1802,10 @@ function calc() {
     'Clinical guidance for discussion — not a diagnosis or prescription.'));
   out.appendChild(tcard);
 
-  // Dysbiosis-correlate lens — reported SEPARATELY from the burden score
-  // (TRIM_PLAN §10). A signal count + contributing factors; explicitly a
-  // correlate, not a measurement, until validated against stool sequencing.
-  if (lens.count > 0) {
-    const lc = el('div', { class: 'card', style: 'border-left:6px solid #185FA5' });
-    lc.appendChild(el('h2', {}, 'Dysbiosis-correlate signals'));
-    lc.appendChild(el('div', { class: 'row', style: 'align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:4px' },
-      `<span class="pill" style="background:#185FA5;color:#fff">${lens.count} signal${lens.count > 1 ? 's' : ''}</span>
-       <span style="font-size:13px;color:var(--inks)">Separate from your GI Symptom Burden — these point toward a microbiome-related (e.g. fermentation) pattern.</span>`));
-    lc.appendChild(el('ul', { class: 'rf-list', style: 'margin-top:6px' },
-      lens.signals.map(s => `<li>${esc(s.label)}</li>`).join('')));
-    lc.appendChild(el('div', { class: 'q-sub', style: 'margin-top:8px;font-style:italic;color:#999' },
-      'A correlate, not a dysbiosis diagnosis — to be validated against stool testing. Informs the microbiome-support discussion (Tier 3).'));
-    out.appendChild(lc);
-  }
+  // Severity × microbiome-risk — the two independent reads combined at the
+  // interpretation layer (TRIM_PLAN §10). Kept as one card so the clinician sees
+  // both axes together; neither metric contaminates the other.
+  out.appendChild(riskMatrixCard(sv, lens));
 
   // Live trend preview: if this patient reference has prior visits, show the
   // trajectory now (current visit included as 'unsaved'), so follow-ups show
