@@ -1033,6 +1033,14 @@ function calc() {
     bars.appendChild(el('div', { class: 'bar-row' },
       `<div class="bar-label"><span>${esc(s.full || s.label)}${roleTag}</span><span class="muted">${maxLabel}</span></div>
        <div class="bar-track"><div class="bar-fill" style="width:${p}%;background:${s.color || '#0F6E56'}"></div></div>`));
+    // Bristol dual-role transparency: the bar shows symptom items only; this note
+    // surfaces the bounded transit contribution that actually feeds the GI core.
+    if (s.id === 'GI' && score.bristolSignal != null && score.secNorm.GI != null) {
+      const addPts = Math.round((score.secNorm.GI - (max ? sc / max : 0)) * 100);
+      const bt = BRISTOL_TYPES.find(t => t.n === extras.bristol);
+      bars.appendChild(el('div', { class: 'q-sub', style: 'margin:-4px 0 12px;padding-left:2px;color:var(--inks)' },
+        `↳ Stool transit ${addPts > 0 ? `adds +${addPts} pts to` : 'adds nothing to'} gut-core${bt ? ` · Type ${bt.n} (${esc(bt.tag)})` : ''} — capped so it can’t dominate.`));
+    }
   });
   out.appendChild(bars);
 
