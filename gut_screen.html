@@ -924,7 +924,7 @@ const PATTERNS = [
       const paradox   = d.fibreParadox === 1 ? { a: true, t: true } : (d.fibreParadox == null ? { a: false, t: false } : { a: true, t: false });
       const triggers  = ge((d.foodTriggers || []).length, 2); // ≥2 fermentable triggers
       const signals = [indig, bloating, foodReact, gasFoul, paradox, triggers];
-      return { fires: indig.t || gasFoul.t || paradox.t, signals };
+      return { fires: indig.t || bloating.t || gasFoul.t || paradox.t, signals };
     },
   },
   {
@@ -1185,7 +1185,12 @@ __modules['storage.js'] = function(__e){
 const { SCHEMA_VERSION } = __req('schema.js');
 const KEY = 'bmgutscreen_v2';
 
-function blankDB() { return { patients: [], meta: { schemaVersion: SCHEMA_VERSION, remindEvery: 5, visitsSinceExport: 0 } }; }
+function blankDB() { return { patients: [], meta: { schemaVersion: SCHEMA_VERSION, remindEvery: 5, visitsSinceExport: 0, patientSeq: 0 } }; }
+function nextPatientCode(db) {
+  db.meta = db.meta || {};
+  db.meta.patientSeq = (db.meta.patientSeq || 0) + 1;
+  return 'BMG-' + String(db.meta.patientSeq).padStart(4, '0');
+}
 function loadDB() {
   let raw; try { raw = localStorage.getItem(KEY); } catch { raw = null; }
   if (!raw) return blankDB();
@@ -1210,7 +1215,14 @@ function patientByRef(db, ref) {
 }
 function normalise(db) {
   if (!db || !Array.isArray(db.patients)) return blankDB();
-  return { patients: db.patients, meta: { ...blankDB().meta, ...(db.meta || {}), schemaVersion: SCHEMA_VERSION } };
+  const meta = { ...blankDB().meta, ...(db.meta || {}), schemaVersion: SCHEMA_VERSION };
+  // Backfill any patients missing a code (legacy records).
+  let seq = meta.patientSeq || 0;
+  for (const p of db.patients) {
+    if (!p.code) { seq++; p.code = 'BMG-' + String(seq).padStart(4, '0'); }
+  }
+  meta.patientSeq = seq;
+  return { patients: db.patients, meta };
 }
 function exportDB(db, deviceLabel) {
   return JSON.stringify({ ...db, meta: { ...(db.meta || {}), schemaVersion: SCHEMA_VERSION, exportedFrom: deviceLabel || 'device', date: Date.now() } }, null, 2);
@@ -1233,7 +1245,7 @@ function mergeImport(currentDb, importedRaw) {
   }
   return { db: cur, added: { patients: addedPatients, visits: addedVisits } };
 }
-__e.blankDB = blankDB; __e.loadDB = loadDB; __e.saveDB = saveDB; __e.uid = uid; __e.patientByRef = patientByRef; __e.exportDB = exportDB; __e.mergeImport = mergeImport;
+__e.blankDB = blankDB; __e.loadDB = loadDB; __e.saveDB = saveDB; __e.uid = uid; __e.nextPatientCode = nextPatientCode; __e.patientByRef = patientByRef; __e.exportDB = exportDB; __e.mergeImport = mergeImport;
 
 // ── PILOT / RESEARCH EXPORT ──────────────────────────────────────────────────
 // De-identified, schema-driven CSV: one row per visit, one column per item +
@@ -1388,7 +1400,7 @@ function saveVisit() {
     patient.visits = patient.visits || [];
     patient.visits.push(visit);
   } else {
-    patient = { id: Store.uid(), ref: ref || null, visits: [visit] };
+    patient = { id: Store.uid(), code: Store.nextPatientCode(db), ref: ref || null, visits: [visit] };
     db.patients.push(patient);
   }
   // Keep the identity fields current (latest entry wins).
@@ -2118,12 +2130,13 @@ let q = '';                                // search query
 
 function init(appCtx) { ctx = appCtx; }
 function show() { render(); }              // called when the tab is opened
-function patientLabel(p) { return (p.name && String(p.name).trim()) || (p.ref && String(p.ref).trim()) || 'Anonymous'; }
+function patientLabel(p) { return (p.name && String(p.name).trim()) || (p.ref && String(p.ref).trim()) || p.code || 'Anonymous'; }
 function patientMeta(p) {
   const bits = [];
+  if (p.code) bits.push(esc(p.code));
   if (p.age) bits.push('Age ' + esc(String(p.age)));
   if (p.gender) bits.push(esc(p.gender));
-  if (p.ref) bits.push('Ref ' + esc(p.ref));
+  if (p.ref) bits.push('Ref: ' + esc(p.ref));
   return bits.join(' · ');
 }
 
@@ -2158,7 +2171,10 @@ function paint(db) {
   if (!grid) return;
   grid.innerHTML = '';
   const needle = q.trim().toLowerCase();
-  const list = (db.patients || []).filter(p => !needle || patientLabel(p).toLowerCase().includes(needle));
+  const list = (db.patients || []).filter(p => !needle ||
+    patientLabel(p).toLowerCase().includes(needle) ||
+    (p.code && p.code.toLowerCase().includes(needle)) ||
+    (p.ref && String(p.ref).toLowerCase().includes(needle)));
   if (!list.length) {
     grid.appendChild(el('div', { class: 'db-empty', style: 'grid-column:1/-1' },
       (db.patients || []).length ? 'No patients match that search.' : '🌱<br>No saved responses yet.<br><span class="muted">Complete a questionnaire and Save to build a record.</span>'));
