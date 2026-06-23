@@ -1336,7 +1336,7 @@ function pilotExportCSV(db) {
     'ex_dietFibre', 'ex_dietProcessed', 'ex_dietBurden', 'ex_alcohol', 'ex_activity',
     'ex_sleep_1', 'ex_sleep_2', 'ex_sleep_3', 'ex_sleep_4', 'ex_sleepBurden',
     'ex_abxCourses', 'ex_dys_stoolVar', 'ex_dys_postInfectious', 'ex_dys_gasFoul', 'ex_dys_fibreParadox', 'ex_dys_foodTriggers', 'ex_dysLensCount',
-    'ex_surgeryCount',
+    'ex_surgeryCount', 'ex_surgeryOther',
     'ex_rome_painFreq', 'ex_rome_onset', 'ex_rome_assoc_defecation', 'ex_rome_assoc_freqchange', 'ex_rome_assoc_formchange',
     'ex_romeCriteriaMet', 'ex_romeSubtype',
     ...PATTERNS.map(p => 'pat_' + p.id),
@@ -1365,7 +1365,7 @@ function pilotExportCSV(db) {
         cell(ex.dietFibre), cell(ex.dietProcessed), num(dietBurden(drv)), cell(ex.alcohol), cell(ex.activity),
         cell((ex.sleep || [])[0]), cell((ex.sleep || [])[1]), cell((ex.sleep || [])[2]), cell((ex.sleep || [])[3]), num(sleepBurden(ex.sleep)),
         cell(ex.abxCourses), cell((ex.dys || {}).stoolVar), cell((ex.dys || {}).postInfectious), cell((ex.dys || {}).gasFoul), cell((ex.dys || {}).fibreParadox), cell(((ex.dys || {}).foodTriggers || []).length), cell(dysbiosisLens(ex).count),
-        cell(surgicalFlags(ex).count),
+        cell(surgicalFlags(ex).count), cell(ex.surgeryOther || ''),
         cell(rm.painFreq), cell(rm.onset), bool(rm.rm_assoc_defecation, true), bool(rm.rm_assoc_freqchange, true), bool(rm.rm_assoc_formchange, true),
         romeResult.criteriaMet ? 1 : 0, cell(romeResult.subtype),
         ...PATTERNS.map(p => fired.has(p.id) ? 1 : 0),
@@ -1409,6 +1409,7 @@ const blankExtras = () => ({
   abxCourses: null,                  // Dys-R: antibiotic dose /12mo
   dys: { stoolVar: null, postInfectious: null, gasFoul: null, fibreParadox: null, foodTriggers: [] },
   surgeries: [],                     // surgical history (id list) — VM/fascial + microbiome
+  surgeryOther: '',                  // free-text "Other" — stored, not scored
   rome: { painFreq: null, onset: null, rm_assoc_defecation: false, rm_assoc_freqchange: false, rm_assoc_formchange: false },
 });
 let extras = blankExtras();
@@ -1417,7 +1418,7 @@ let extras = blankExtras();
 // clinician can run baseline then follow-up in one sitting; the header chip's ✕
 // clears it. NOTE: with a name entered this record holds PII — it stays in this
 // browser's local storage only (never transmitted).
-let session = { name: '', age: '', gender: '', ref: '', followup: false };
+let session = { name: '', age: '', gender: '', ref: '', followup: false, pregnant: '' };
 
 function reset() { answers = {}; redflags = {}; extras = blankExtras(); session.followup = false; }
 
@@ -1494,7 +1495,7 @@ function updateIdentityChip() {
   else chip.style.display = 'none';
 }
 // Clear the patient identity and start a fresh (anonymous) questionnaire.
-function clearPatient() { session.name = session.ref = session.age = session.gender = ''; session.followup = false; reset(); render(); }
+function clearPatient() { session.name = session.ref = session.age = session.gender = session.pregnant = ''; session.followup = false; reset(); render(); }
 
 // Session card: patient details (name / age / gender + optional reference code)
 // and the follow-up toggle. Repeat visits link by reference, or by name if no
@@ -1527,6 +1528,17 @@ function sessionCard() {
     wrap.appendChild(b);
   });
   agrow.appendChild(wrap); body.appendChild(agrow);
+
+  // Pregnancy / applicability flags
+  const appRow = el('div', { class: 'q' });
+  appRow.appendChild(el('div', { class: 'q-txt', style: 'font-weight:500' }, 'Applicability notes (optional)'));
+  const appWrap = el('div', { style: 'display:flex;gap:8px;flex-wrap:wrap' });
+  [['Pregnant', 'yes'], ['Not pregnant', 'no']].forEach(([lab, val]) => {
+    const b = el('button', { class: `chip-opt${session.pregnant === val ? ' sel' : ''}`, type: 'button' }, lab);
+    b.onclick = () => { session.pregnant = session.pregnant === val ? '' : val; appWrap.querySelectorAll('.chip-opt').forEach(o => o.classList.remove('sel')); if (session.pregnant) b.classList.add('sel'); };
+    appWrap.appendChild(b);
+  });
+  appRow.appendChild(appWrap); body.appendChild(appRow);
 
   // Reference code
   const row = el('div', { class: 'q' });
@@ -1952,7 +1964,16 @@ function surgicalCard() {
     };
     chips.appendChild(b);
   });
-  body.appendChild(chips); card.appendChild(body);
+  body.appendChild(chips);
+  // Free-text "Other" — stored for context, not consumed by scoring logic.
+  const otherRow = el('div', { style: 'margin-top:10px;display:flex;align-items:center;gap:8px' });
+  otherRow.appendChild(el('span', { style: 'font-size:12px;color:var(--inks);white-space:nowrap' }, 'Other:'));
+  const otherIn = el('input', { type: 'text', value: extras.surgeryOther || '', placeholder: 'e.g. spinal fusion, hip replacement…',
+    style: 'flex:1;padding:6px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:12px' });
+  otherIn.oninput = () => { extras.surgeryOther = otherIn.value; };
+  otherRow.appendChild(otherIn);
+  body.appendChild(otherRow);
+  card.appendChild(body);
   return card;
 }
 
@@ -2037,6 +2058,18 @@ function calc() {
 
   const out = document.getElementById('patient-results');
   out.innerHTML = '';
+
+  const isPregnant = session.pregnant === 'yes';
+  const ageNum = parseInt(session.age, 10);
+  const isMinor = !isNaN(ageNum) && ageNum < 18;
+  if (isPregnant || isMinor) {
+    const note = isPregnant && isMinor
+      ? 'Patient is pregnant and under 18.'
+      : isPregnant ? 'Patient is pregnant.' : 'Patient is under 18.';
+    out.appendChild(el('div', { class: 'rf-banner', style: 'background:#FFF3CD;border-color:#FECB1F;color:#7B5900' },
+      `<div class="rf-ic" style="font-size:20px">ℹ️</div><div><div class="rf-title" style="color:#7B5900">Applicability note</div>
+       <div class="rf-body">${esc(note)} This screen was developed in a general adult population. Results and triage guidance should be interpreted with that context in mind — discuss with a clinician before acting.</div></div>`));
+  }
 
   if (anyRedFlag(redflags)) {
     const items = fired.map(f => `<li>${esc(f.label)}</li>`).join('');
