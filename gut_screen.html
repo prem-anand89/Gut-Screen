@@ -271,7 +271,7 @@ const SECTIONS = [
   // Connected-axis screening domains, refocused at the trim (TRIM_PLAN §3–§6).
   // Oral/ENT, Hormonal, broad-Metabolic removed (no gut-specific engine pathway);
   // Sleep relocated to drivers; Skin collapsed into IM.
-  { id: 'IM', label: 'IM', full: 'Immune, inflammatory & skin', role: 'screen', color: '#A32D2D', bg: '#FCEBEB' },
+  { id: 'IM', label: 'IM', full: 'Immune, inflammatory & skin', role: 'screen', color: '#B04A20', bg: '#FAEEE8' },
   { id: 'BG', label: 'BG', full: 'Brain-gut & mood',           role: 'screen', color: '#534AB7', bg: '#EEEDFE' },
   { id: 'NU', label: 'NU', full: 'Nutrient & absorption',      role: 'screen', color: '#185FA5', bg: '#E6F1FB' },
 ];
@@ -1709,8 +1709,8 @@ function render() {
   root.appendChild(lifestyleCard());
   root.appendChild(sleepCard());
   root.appendChild(surgicalCard());
-  root.appendChild(dysCard());
   root.appendChild(romeCard());
+  root.appendChild(dysCard());
 
   const actions = el('div', { class: 'card row', style: 'justify-content:flex-end' });
   actions.appendChild(el('button', { class: 'btn btn-g', onclick: calc }, 'See results →'));
@@ -1740,7 +1740,7 @@ function bristolCard() {
 
 function pss4Card() {
   const card = el('div', { class: 'sec-card' });
-  card.appendChild(el('div', { class: 'sec-head', style: 'background:#534AB7' }, 'Stress (PSS-4)'));
+  card.appendChild(el('div', { class: 'sec-head', style: 'background:#5A6EA7' }, 'Stress (PSS-4)'));
   const body = el('div', { class: 'sec-body' });
   body.appendChild(el('div', { class: 'q-sub', style: 'padding-top:8px' }, 'Over the last month. (Shown alongside your result, not part of the score.)'));
   PSS4_ITEMS.forEach((q, qi) => {
@@ -1762,7 +1762,7 @@ function pss4Card() {
 
 function painCard() {
   const card = el('div', { class: 'sec-card' });
-  card.appendChild(el('div', { class: 'sec-head', style: 'background:#A32D2D' }, 'Pain (optional)'));
+  card.appendChild(el('div', { class: 'sec-head', style: 'background:#8B3A1A' }, 'Pain (optional)'));
   const body = el('div', { class: 'sec-body' });
   body.appendChild(el('div', { class: 'q-txt', style: 'font-weight:500;padding-top:6px' }, 'Current pain level (0 = none, 10 = worst)'));
   const nrs = el('div', { class: 'nrs-row' });
@@ -1842,7 +1842,7 @@ function lifestyleCard() {
 // only; tracked over time, kept OUT of the GI Symptom Burden score.
 function sleepCard() {
   const card = el('div', { class: 'sec-card' });
-  card.appendChild(el('div', { class: 'sec-head', style: 'background:#117A8B' }, 'Sleep'));
+  card.appendChild(el('div', { class: 'sec-head', style: 'background:#1A6B4A' }, 'Sleep'));
   const body = el('div', { class: 'sec-body' });
   body.appendChild(el('div', { class: 'q-sub', style: 'padding-top:8px' }, 'How often, over the past 2 weeks? Tracked over time — not part of the score.'));
   SLEEP_ITEMS.forEach((q, qi) => {
@@ -1866,7 +1866,7 @@ function sleepCard() {
 // phenotypes; labelled "correlate", validated against stool sequencing at pilot.
 function dysCard() {
   const card = el('div', { class: 'sec-card' });
-  card.appendChild(el('div', { class: 'sec-head', style: 'background:#185FA5' }, 'Gut-microbiome signals'));
+  card.appendChild(el('div', { class: 'sec-head', style: 'background:#2E6B8A' }, 'Gut-microbiome signals'));
   const body = el('div', { class: 'sec-body' });
   body.appendChild(el('div', { class: 'q-sub', style: 'padding-top:8px' },
     'A few questions that point toward microbiome-related patterns. Reported separately — not part of the GI score, and not a diagnosis.'));
@@ -1910,7 +1910,7 @@ function dysCard() {
 function romeCard() {
   const { ROME_FREQ, ROME_ONSET, ROME_ASSOC } = __req('romeiv.js');
   const card = el('div', { class: 'sec-card' });
-  card.appendChild(el('div', { class: 'sec-head', style: 'background:#534AB7' }, 'Bowel-pain pattern (Rome IV-informed)'));
+  card.appendChild(el('div', { class: 'sec-head', style: 'background:#5A5A7A' }, 'Bowel-pain pattern (Rome IV-informed)'));
   const body = el('div', { class: 'sec-body' });
   body.appendChild(el('div', { class: 'q-sub', style: 'padding-top:8px' },
     'Optional — helps classify a constipation/diarrhoea/mixed pattern. Skip if unsure; not part of the GI score.'));
@@ -1950,7 +1950,7 @@ function chipRow(label, options, getter, setter) {
 // microbiome-altering ones (gallbladder/resection/bariatric) feed the dys lens.
 function surgicalCard() {
   const card = el('div', { class: 'sec-card' });
-  card.appendChild(el('div', { class: 'sec-head', style: 'background:#6B4A2E' }, 'Surgical history'));
+  card.appendChild(el('div', { class: 'sec-head', style: 'background:#4A5A6B' }, 'Surgical history'));
   const body = el('div', { class: 'sec-body' });
   body.appendChild(el('div', { class: 'q-sub', style: 'padding-top:8px' }, 'Tap any past surgeries. Informs manual-therapy (adhesions) and microbiome reasoning — not part of the GI score.'));
   const chips = el('div', { class: 'chips' });
@@ -2233,6 +2233,7 @@ function newVisitFor(identity, followup) {
   session.age = id.age || '';
   session.gender = id.gender || '';
   session.ref = id.ref || '';
+  session.pregnant = id.pregnant || ''; // clear on each new patient; not stored in patient record
   session.followup = !!followup;
   render();
 }
