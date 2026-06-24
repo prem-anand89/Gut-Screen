@@ -195,12 +195,14 @@ h1{font-size:22px}h2{font-size:17px;margin-bottom:8px}h3{font-size:14px}
   <div class="app-spacer"></div>
   <div class="mode-switch" id="modeSwitch">
     <button class="mode-btn active" data-mode="patient" type="button">Questionnaire</button>
+    <button class="mode-btn" data-mode="clinician" type="button">Clinician</button>
     <button class="mode-btn" data-mode="record" type="button">Patient records</button>
   </div>
   <div class="app-chip" id="activeChip" style="display:none"><span class="nm" id="activeName"></span><button class="x" id="activeClear" type="button" title="Clear patient">✕</button></div>
 </header>
 <main>
   <section id="mode-patient" class="mode show wrap"></section>
+  <section id="mode-clinician" class="mode wrap"></section>
   <section id="mode-record" class="mode wrap"></section>
 </main>
 <div class="toast" id="toast"></div>
@@ -668,7 +670,8 @@ function modifiableFactors(extras) {
   const disrupt = DISRUPTORS.filter(d => ex.meds && ex.meds[d.id]);
   const alc = ex.alcohol  != null ? ALCOHOL_LEVELS[ex.alcohol]   : null;
   const act = ex.activity != null ? ACTIVITY_LEVELS[ex.activity] : null;
-  const sb = sleepBand(sleepBurden(ex.sleep));
+  const sBurden = sleepBurden(ex.sleep);
+  const sb = sleepBand(sBurden);
   const surg = surgicalFlags(ex);
   return [
     { icon: '🧠', label: 'Psychological load', band: pl ? pl.l : '—',
@@ -680,7 +683,7 @@ function modifiableFactors(extras) {
       score: disrupt.length ? disrupt.map(d => d.label).join(', ') : null, color: disrupt.length ? '#A32D2D' : (ex.meds ? '#0F6E56' : '#999') },
     { icon: '🥗', label: 'Diet quality', band: db ? db.l : '—', score: null, color: db ? db.c : '#999' },
     { icon: '🏃', label: 'Lifestyle', band: act || '—', score: alc != null ? `Alcohol: ${alc}` : null, color: act ? '#117A8B' : '#999' },
-    { icon: '😴', label: 'Sleep', band: sb ? sb.l : '—', score: null, color: sb ? sb.c : '#999' },
+    { icon: '😴', label: 'Sleep', band: sb ? sb.l : '—', score: sBurden != null ? `${Math.round(sBurden * 100)}/100 disturbance` : null, color: sb ? sb.c : '#999' },
     { icon: '🔪', label: 'Surgical history', band: surg.count ? `${surg.count} noted` : 'None noted',
       score: surg.count ? surg.list.join(', ') : null, color: surg.count ? '#185FA5' : '#999' },
   ];
@@ -2151,6 +2154,8 @@ function computeAll() {
     bgAnxiety: answers.bg_anxiety, bgMood: answers.bg_mood,
     meds: extras.meds, dietFibre: extras.dietFibre, dietProcessed: extras.dietProcessed,
     alcohol: extras.alcohol, activity: extras.activity,
+    sleep: extras.sleep,                                  // sleep driver — feeds the modifiable-factors card
+    surgeries: extras.surgeries, surgeryOther: extras.surgeryOther,
     abxCourses: extras.abxCourses, dys: extras.dys,
     rome: extras.rome,
   };
@@ -2211,31 +2216,7 @@ function calc() {
   out.appendChild(hero);
 
   // Triage — the headline next step (clinician guidance, not prescription).
-  const tcard = el('div', { class: 'card', style: `border-left:6px solid ${tri.color}` });
-  tcard.appendChild(el('h2', {}, 'Suggested next step'));
-  tcard.appendChild(el('div', { class: 'row', style: 'align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:4px' },
-    `<span class="pill" style="background:${tri.color};color:#fff">Tier ${tri.level} · ${esc(tri.label)}</span>`));
-  tcard.appendChild(el('div', { style: 'font-size:13px;color:var(--inks);line-height:1.5;margin-top:6px' }, esc(tri.action)));
-  if (tri.reasons.length) tcard.appendChild(el('div', { class: 'q-sub', style: 'margin-top:8px' },
-    'Why: ' + tri.reasons.map(esc).join(' · ')));
-  if (tri.alsoConsider.length) {
-    tcard.appendChild(el('div', { class: 'q-sub', style: 'margin-top:8px;font-weight:600' }, 'Also worth noting:'));
-    tri.alsoConsider.forEach(a => tcard.appendChild(el('div', { class: 'q-sub', style: 'padding-left:4px' },
-      `• ${esc(a.label)} — ${a.reasons.map(esc).join('; ')}`)));
-  }
-  if (rome.criteriaMet) {
-    tcard.appendChild(el('div', { class: 'q-sub', style: 'margin-top:8px;font-weight:600;color:#185FA5' },
-      `Meets Rome IV-informed criteria for ${esc(rome.subtype)} — single-visit estimate, not the prospective diary Rome IV was validated against. A pattern to discuss, not a diagnosis.`));
-  }
-  if (clinicianView && tri.investigations && tri.investigations.length) {
-    tcard.appendChild(el('div', { class: 'q-sub', style: 'margin-top:10px;font-weight:600;color:#3A4A5A' }, 'Suggested investigations / management:'));
-    tcard.appendChild(el('ul', { class: 'rf-list', style: 'color:#3A4A5A;margin-top:2px' },
-      tri.investigations.map(i => `<li>${esc(i)}</li>`).join('')));
-    tcard.appendChild(el('div', { class: 'q-sub', style: 'color:#888;font-style:italic;margin-top:3px' }, 'Pattern-matched — apply clinical judgement. Not a protocol.'));
-  }
-  tcard.appendChild(el('div', { class: 'q-sub', style: 'margin-top:10px;font-style:italic;color:#999' },
-    'Clinical guidance for discussion — not a diagnosis or prescription.'));
-  out.appendChild(tcard);
+  out.appendChild(triageCard(tri, rome, clinicianView));
 
   // Severity × microbiome-risk — the two independent reads combined at the
   // interpretation layer (TRIM_PLAN §10). Kept as one card so the clinician sees
@@ -2357,6 +2338,37 @@ function calc() {
   out.appendChild(actions);
 
   out.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+}
+
+// Suggested-next-step (triage) card. showInvestigations adds the pattern-matched
+// investigation/management list (clinician-facing). Shared by calc() and the
+// clinician tab so both render an identical plan block.
+function triageCard(tri, rome, showInvestigations) {
+  const tcard = el('div', { class: 'card', style: `border-left:6px solid ${tri.color}` });
+  tcard.appendChild(el('h2', {}, 'Suggested next step'));
+  tcard.appendChild(el('div', { class: 'row', style: 'align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:4px' },
+    `<span class="pill" style="background:${tri.color};color:#fff">Tier ${tri.level} · ${esc(tri.label)}</span>`));
+  tcard.appendChild(el('div', { style: 'font-size:13px;color:var(--inks);line-height:1.5;margin-top:6px' }, esc(tri.action)));
+  if (tri.reasons.length) tcard.appendChild(el('div', { class: 'q-sub', style: 'margin-top:8px' },
+    'Why: ' + tri.reasons.map(esc).join(' · ')));
+  if (tri.alsoConsider.length) {
+    tcard.appendChild(el('div', { class: 'q-sub', style: 'margin-top:8px;font-weight:600' }, 'Also worth noting:'));
+    tri.alsoConsider.forEach(a => tcard.appendChild(el('div', { class: 'q-sub', style: 'padding-left:4px' },
+      `• ${esc(a.label)} — ${a.reasons.map(esc).join('; ')}`)));
+  }
+  if (rome && rome.criteriaMet) {
+    tcard.appendChild(el('div', { class: 'q-sub', style: 'margin-top:8px;font-weight:600;color:#185FA5' },
+      `Meets Rome IV-informed criteria for ${esc(rome.subtype)} — single-visit estimate, not the prospective diary Rome IV was validated against. A pattern to discuss, not a diagnosis.`));
+  }
+  if (showInvestigations && tri.investigations && tri.investigations.length) {
+    tcard.appendChild(el('div', { class: 'q-sub', style: 'margin-top:10px;font-weight:600;color:#3A4A5A' }, 'Suggested investigations / management:'));
+    tcard.appendChild(el('ul', { class: 'rf-list', style: 'color:#3A4A5A;margin-top:2px' },
+      tri.investigations.map(i => `<li>${esc(i)}</li>`).join('')));
+    tcard.appendChild(el('div', { class: 'q-sub', style: 'color:#888;font-style:italic;margin-top:3px' }, 'Pattern-matched — apply clinical judgement. Not a protocol.'));
+  }
+  tcard.appendChild(el('div', { class: 'q-sub', style: 'margin-top:10px;font-style:italic;color:#999' },
+    'Clinical guidance for discussion — not a diagnosis or prescription.'));
+  return tcard;
 }
 
 // Clinician detail card: item-level responses, Rome IV criteria answers,
@@ -2677,8 +2689,91 @@ function newVisitFor(identity, followup) {
   render();
 }
 
+// Load a SAVED visit back into the live questionnaire state (answers, drivers,
+// red flags) and bind the patient identity. Used by the Patient-records tab to
+// re-open a past session. showResults=true also runs calc() so the results
+// render immediately (and lastCalc is populated for the Clinician tab).
+function loadVisit(identity, visit, showResults) {
+  const id = identity || {}, v = visit || {};
+  answers = { ...(v.answers || {}) };
+  redflags = { ...(v.redflags || {}) };
+  // Re-hydrate extras onto a fresh blank so visits saved on an older schema
+  // (missing newer nested keys) still render every driver.
+  const saved = v.extras ? JSON.parse(JSON.stringify(v.extras)) : {};
+  extras = Object.assign(blankExtras(), saved);
+  extras.meds  = Object.assign(blankExtras().meds, saved.meds || {});
+  extras.dys   = Object.assign(blankExtras().dys,  saved.dys  || {});
+  extras.rome  = Object.assign(blankExtras().rome, saved.rome || {});
+  session.name = id.name || '';
+  session.age = id.age || '';
+  session.gender = id.gender || '';
+  session.ref = id.ref || '';
+  session.pregnant = '';
+  session.followup = !!v.followup;
+  render();
+  if (showResults) calc();
+}
+
+// Clinician tab — detailed results + management plan for the current screen
+// (lastCalc), with a dedicated clinician print. Populated by running a
+// questionnaire or opening a saved visit (Patient records → View results).
+function renderClinician() {
+  const root = document.getElementById('mode-clinician');
+  if (!root) return;
+  root.innerHTML = '';
+  root.appendChild(el('div', { class: 'intro' },
+    '<b>Clinician workspace.</b> Detailed results and management plan for the current screen. ' +
+    'Run a questionnaire, or open a saved visit from Patient records (“View results”), to populate this view.'));
+
+  if (!lastCalc) {
+    root.appendChild(el('div', { class: 'card' },
+      '<div class="empty-note">🩺<br>No screen loaded yet.<br>' +
+      '<span class="muted">Complete a questionnaire or open a saved visit to see the clinician view and plan.</span></div>'));
+    return;
+  }
+  const c = lastCalc;
+  const { score, sv, conf, lens, rome, tri } = c;
+
+  // Identity + print header
+  const who = (session.name || '').trim() || (session.ref || '').trim() || 'Anonymous screen';
+  const meta = [];
+  if (session.age) meta.push('Age ' + esc(String(session.age)));
+  if (session.gender) meta.push(esc(session.gender));
+  if (session.ref) meta.push('Ref: ' + esc(session.ref));
+  if (session.pregnant === 'yes') meta.push('Pregnant');
+  meta.push(session.followup ? 'Follow-up' : 'Baseline');
+  const head = el('div', { class: 'card row', style: 'justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap' });
+  head.appendChild(el('div', {},
+    `<div style="font-weight:700;font-size:16px">👤 ${esc(who)}</div>
+     <div class="q-sub" style="margin:2px 0 0">${meta.join(' · ')}</div>`));
+  const printBtn = el('button', { class: 'btn btn-g', type: 'button' }, '🖨 Print clinician report');
+  printBtn.onclick = () => printSummary('clinician');
+  head.appendChild(printBtn);
+  root.appendChild(head);
+
+  // Hero score
+  const hero = el('div', { class: 'card' });
+  hero.appendChild(el('div', { class: 'hero' },
+    `<div><div class="big">${sv.index}%</div><div class="sub">GI Symptom Burden</div></div>
+     <div style="flex:1;min-width:160px"><span class="pill ${sv.cls}">${esc(sv.label)}</span>
+     <div style="font-size:12px;color:var(--inks);margin-top:8px;line-height:1.5">${esc(sv.desc)}</div>
+     <div class="conf-note">Confidence: <b>${esc(conf.level)}</b> · ${score.completeness}% complete</div></div>`));
+  root.appendChild(hero);
+
+  // Plan (triage + investigations always shown here) + risk matrix + full detail
+  root.appendChild(triageCard(tri, rome, true));
+  root.appendChild(riskMatrixCard(sv, lens));
+  root.appendChild(clinicianDetailCard(c));
+
+  // Longitudinal context if this patient has prior saved visits
+  const prior = priorVisits();
+  if (prior.length >= 1) root.appendChild(trendCard(prior.concat([currentVisit()]), true));
+}
+
 function init(c) { nav = c || {}; }
-__e.init = init; __e.reset = reset; __e.render = render; __e.newVisitFor = newVisitFor; __e.clearPatient = clearPatient;
+__e.init = init; __e.reset = reset; __e.render = render; __e.newVisitFor = newVisitFor;
+__e.loadVisit = loadVisit; __e.renderClinician = renderClinician; __e.hasResult = () => !!lastCalc;
+__e.clearPatient = clearPatient;
 return __e;
 };
 
@@ -2814,7 +2909,14 @@ function renderDetail(root, db) {
     card.appendChild(el('span', { class: 'pill ' + sevCls }, esc(pt.band)));
     if (pt.delta) card.appendChild(el('div', { style: `font-weight:700;color:${pt.delta.color}` }, esc(pt.delta.label)));
     const vrec = visits.find(v => v.id === pt.id);
-    card.appendChild(el('button', { class: 'btn btn-gh', type: 'button', style: 'color:var(--re)', onclick: () => deleteVisit(p, vrec) }, 'Delete'));
+    const identity = { name: p.name, age: p.age, gender: p.gender, ref: p.ref };
+    const acts = el('div', { class: 'row', style: 'gap:6px;flex-wrap:wrap' });
+    acts.appendChild(el('button', { class: 'btn btn-o', type: 'button', title: 'Load answers + show results',
+      onclick: () => ctx.openVisit(identity, vrec, true) }, '📊 View results'));
+    acts.appendChild(el('button', { class: 'btn btn-gh', type: 'button', title: 'Load answers into the questionnaire to review or edit',
+      onclick: () => ctx.openVisit(identity, vrec, false) }, '📋 Load'));
+    acts.appendChild(el('button', { class: 'btn btn-gh', type: 'button', style: 'color:var(--re)', onclick: () => deleteVisit(p, vrec) }, 'Delete'));
+    card.appendChild(acts);
     root.appendChild(card);
   });
 }
@@ -2925,12 +3027,16 @@ function setMode(name) {
   $$('.mode').forEach(s => s.classList.toggle('show', s.id === 'mode-' + name));
   $$('.mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === name));
   if (name === 'record') Record.show();
+  if (name === 'clinician') Patient.renderClinician();
 }
 
 function boot() {
   Record.init({
     // Switch to the questionnaire, optionally pre-bound to a patient identity + follow-up.
     goQuestionnaire: (identity, followup) => { Patient.newVisitFor(identity, followup); setMode('patient'); window.scrollTo({ top: 0 }); },
+    // Re-open a SAVED visit. showResults=true runs the results (and lands on the
+    // questionnaire with results below); false just loads the answers for review.
+    openVisit: (identity, visit, showResults) => { Patient.loadVisit(identity, visit, showResults); setMode('patient'); window.scrollTo({ top: 0 }); },
   });
   // Let the questionnaire banner jump to the records tab (to pick/manage patients).
   Patient.init({ goRecords: () => setMode('record') });
