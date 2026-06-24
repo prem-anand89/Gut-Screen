@@ -235,7 +235,54 @@ function dialogForm(title, fields, { okLabel = 'Save' } = {}) {
     $('#dlgCancel').onclick = () => { closeDlg(); resolve(null); };
   });
 }
-__e.$ = $; __e.$$ = $$; __e.el = el; __e.esc = esc; __e.fmtDate = fmtDate; __e.toast = toast; __e.dialogConfirm = dialogConfirm; __e.dialogForm = dialogForm;
+// Richer patient-details capture (name/age/gender/pregnant/ref). Gender and
+// pregnancy are chip selects, so this can't use the text-only dialogForm.
+// Resolves to { name, age, gender, pregnant, ref } or null on cancel.
+function patientForm(initial = {}, { title = 'Patient details', okLabel = 'Start screening →' } = {}) {
+  return new Promise(resolve => {
+    const v = {
+      name: initial.name || '', age: initial.age || '', gender: initial.gender || '',
+      pregnant: initial.pregnant || '', ref: initial.ref || '',
+    };
+    const lblStyle = 'font-size:11px;font-weight:600;color:var(--inkt)';
+    const genderChips = ['Female', 'Male', 'Other'].map(g =>
+      `<button class="chip-opt pf-gender${v.gender === g ? ' sel' : ''}" data-g="${esc(g)}" type="button">${esc(g)}</button>`).join('');
+    const pregChips = [['Pregnant', 'yes'], ['Not pregnant', 'no']].map(([l, val]) =>
+      `<button class="chip-opt pf-preg${v.pregnant === val ? ' sel' : ''}" data-p="${val}" type="button">${esc(l)}</button>`).join('');
+    openDlg(`
+      <div class="dlg-h">${esc(title)}</div>
+      <div class="dlg-b">
+        <label style="${lblStyle}">Name</label>
+        <input data-key="name" value="${esc(v.name)}" placeholder="Patient name">
+        <label style="${lblStyle}">Age</label>
+        <input data-key="age" inputmode="numeric" value="${esc(v.age)}" placeholder="Age">
+        <label style="${lblStyle}">Gender</label>
+        <div class="row" style="gap:6px;flex-wrap:wrap;margin-bottom:10px">${genderChips}</div>
+        <label style="${lblStyle}">Applicability notes (optional)</label>
+        <div class="row" style="gap:6px;flex-wrap:wrap;margin-bottom:10px">${pregChips}</div>
+        <label style="${lblStyle}">Reference / ID (optional)</label>
+        <input data-key="ref" value="${esc(v.ref)}" placeholder="e.g. P-1042">
+      </div>
+      <div class="dlg-acts">
+        <button class="btn btn-gh" id="dlgCancel">Cancel</button>
+        <button class="btn btn-g" id="dlgOk">${esc(okLabel)}</button>
+      </div>`);
+    $$('#dlg .pf-gender').forEach(b => b.onclick = () => {
+      v.gender = v.gender === b.dataset.g ? '' : b.dataset.g;
+      $$('#dlg .pf-gender').forEach(x => x.classList.remove('sel')); if (v.gender) b.classList.add('sel');
+    });
+    $$('#dlg .pf-preg').forEach(b => b.onclick = () => {
+      v.pregnant = v.pregnant === b.dataset.p ? '' : b.dataset.p;
+      $$('#dlg .pf-preg').forEach(x => x.classList.remove('sel')); if (v.pregnant) b.classList.add('sel');
+    });
+    $('#dlgOk').onclick = () => {
+      $$('#dlg input[data-key]').forEach(i => { v[i.dataset.key] = i.value.trim(); });
+      closeDlg(); resolve(v);
+    };
+    $('#dlgCancel').onclick = () => { closeDlg(); resolve(null); };
+  });
+}
+__e.$ = $; __e.$$ = $$; __e.el = el; __e.esc = esc; __e.fmtDate = fmtDate; __e.toast = toast; __e.dialogConfirm = dialogConfirm; __e.dialogForm = dialogForm; __e.patientForm = patientForm;
 return __e;
 };
 
@@ -1391,7 +1438,7 @@ const { scaleFor, RECALL_NOTE, PSS4_ITEMS, PSS4_ANCHORS, pss4Score, BRISTOL_TYPE
         SURGERIES, surgicalFlags } = __req('scales.js');
 const { computeScores, scoreConfidence } = __req('scoring.js');
 const { RED_FLAGS, anyRedFlag, firedRedFlags, RED_FLAG_BANNER } = __req('redflags.js');
-const { el, esc, toast } = __req('util.js');
+const { el, esc, toast, patientForm } = __req('util.js');
 const Store = __req('storage.js');
 const { detectPatterns } = __req('patterns.js');
 const { triage } = __req('triage.js');
@@ -1400,6 +1447,7 @@ const { classifyRomeIV } = __req('romeiv.js');
 
 let answers = {};      // id -> value (absent = unanswered)
 let redflags = {};     // rf_id -> bool
+let nav = {};          // { goRecords } — set by app.js so the banner can jump to records
 // Modifiable drivers — stored on the visit (extras), kept OUT of the Index.
 const blankExtras = () => ({
   bristol: null, pss4: [null, null, null, null], nrsPain: null, painRegion: null,
@@ -1497,69 +1545,57 @@ function updateIdentityChip() {
 // Clear the patient identity and start a fresh (anonymous) questionnaire.
 function clearPatient() { session.name = session.ref = session.age = session.gender = session.pregnant = ''; session.followup = false; reset(); render(); }
 
-// Session card: patient details (name / age / gender + optional reference code)
-// and the follow-up toggle. Repeat visits link by reference, or by name if no
-// reference is given.
-function sessionCard() {
+// Patient banner: a compact read-only header showing which patient this screen
+// is for. Identity is now captured/edited in the Patient Records tab (or via the
+// inline "Edit details" dialog); the questionnaire only reflects the selection.
+// The baseline/follow-up toggle stays here because it is visit-scoped (it drives
+// the recall window for this screen, not the patient's identity).
+function patientBanner() {
+  const lbl = (session.name || '').trim() || (session.ref || '').trim();
   const card = el('div', { class: 'sec-card' });
-  card.appendChild(el('div', { class: 'sec-head', style: 'background:#3A4A5A' }, 'Patient details'));
-  const body = el('div', { class: 'sec-body' });
-  body.appendChild(el('div', { class: 'q-sub', style: 'padding-top:8px' },
-    'Used to label and link repeat visits. Stored only in this browser (never transmitted).'));
+  const head = el('div', { class: 'sec-head', style: 'background:#3A4A5A' });
+  head.appendChild(el('span', {}, lbl ? '👤 ' + esc(lbl) : 'Anonymous screen'));
+  head.appendChild(el('span', { style: 'opacity:.85;font-weight:500' }, session.followup ? 'Follow-up' : 'Baseline'));
+  card.appendChild(head);
 
-  const inStyle = 'padding:8px 10px;border:1px solid #C9D2DC;border-radius:6px;font-size:14px';
-  // Name
-  const nrow = el('div', { class: 'q' });
-  nrow.appendChild(el('div', { class: 'q-txt', style: 'font-weight:500' }, 'Name'));
-  const nameIn = el('input', { type: 'text', value: session.name || '', placeholder: 'Patient name', style: inStyle + ';width:200px' });
-  nameIn.oninput = () => { session.name = nameIn.value; updateIdentityChip(); };
-  nrow.appendChild(nameIn); body.appendChild(nrow);
+  const body = el('div', { class: 'sec-body', style: 'padding-top:12px' });
+  if (lbl) {
+    const meta = [];
+    if (session.age) meta.push('Age ' + esc(String(session.age)));
+    if (session.gender) meta.push(esc(session.gender));
+    if (session.ref) meta.push('Ref: ' + esc(session.ref));
+    if (session.pregnant === 'yes') meta.push('Pregnant');
+    body.appendChild(el('div', { class: 'q-sub', style: 'padding-top:0' },
+      meta.length ? meta.join(' · ') : 'No additional details recorded.'));
+  } else {
+    body.appendChild(el('div', { class: 'q-sub', style: 'padding-top:0' },
+      'Not linked to a patient record. Add details to label this screen and track follow-ups over time.'));
+  }
 
-  // Age + Gender (one row)
-  const agrow = el('div', { class: 'q' });
-  agrow.appendChild(el('div', { class: 'q-txt', style: 'font-weight:500' }, 'Age & gender'));
-  const wrap = el('div', { style: 'display:flex;gap:8px;align-items:center;flex-wrap:wrap' });
-  const ageIn = el('input', { type: 'text', inputmode: 'numeric', value: session.age || '', placeholder: 'Age', style: inStyle + ';width:64px' });
-  ageIn.oninput = () => { session.age = ageIn.value; };
-  wrap.appendChild(ageIn);
-  ['Female', 'Male', 'Other'].forEach(g => {
-    const b = el('button', { class: `chip-opt${session.gender === g ? ' sel' : ''}`, type: 'button' }, g);
-    b.onclick = () => { session.gender = session.gender === g ? '' : g; wrap.querySelectorAll('.chip-opt').forEach(o => o.classList.remove('sel')); if (session.gender) b.classList.add('sel'); };
-    wrap.appendChild(b);
-  });
-  agrow.appendChild(wrap); body.appendChild(agrow);
-
-  // Pregnancy / applicability flags
-  const appRow = el('div', { class: 'q' });
-  appRow.appendChild(el('div', { class: 'q-txt', style: 'font-weight:500' }, 'Applicability notes (optional)'));
-  const appWrap = el('div', { style: 'display:flex;gap:8px;flex-wrap:wrap' });
-  [['Pregnant', 'yes'], ['Not pregnant', 'no']].forEach(([lab, val]) => {
-    const b = el('button', { class: `chip-opt${session.pregnant === val ? ' sel' : ''}`, type: 'button' }, lab);
-    b.onclick = () => { session.pregnant = session.pregnant === val ? '' : val; appWrap.querySelectorAll('.chip-opt').forEach(o => o.classList.remove('sel')); if (session.pregnant) b.classList.add('sel'); };
-    appWrap.appendChild(b);
-  });
-  appRow.appendChild(appWrap); body.appendChild(appRow);
-
-  // Reference code
-  const row = el('div', { class: 'q' });
-  row.appendChild(el('div', { class: 'q-txt', style: 'font-weight:500' }, 'Reference / ID (optional)'));
-  const input = el('input', { type: 'text', value: session.ref || '', placeholder: 'e.g. P-1042', style: inStyle + ';width:160px' });
-  input.oninput = () => { session.ref = input.value; updateIdentityChip(); };
-  row.appendChild(input);
-  body.appendChild(row);
-  // Follow-up toggle
-  const fu = el('div', { class: 'q', style: 'align-items:center' });
-  fu.appendChild(el('div', { class: 'q-txt', style: 'font-weight:500' }, 'This is a follow-up visit'));
-  const toggle = el('button', { class: `chip-opt${session.followup ? ' sel' : ''}`, type: 'button' },
-    session.followup ? 'Follow-up ✓' : 'Baseline');
-  toggle.onclick = () => {
-    session.followup = !session.followup;
-    toggle.classList.toggle('sel');
-    toggle.textContent = session.followup ? 'Follow-up ✓' : 'Baseline';
-    render(); // re-render so the recall note under each section updates
+  const actions = el('div', { class: 'row', style: 'gap:8px;flex-wrap:wrap;margin-top:8px;align-items:center' });
+  const editBtn = el('button', { class: 'btn btn-gh', type: 'button' }, lbl ? '✎ Edit details' : '+ Add patient details');
+  editBtn.onclick = async () => {
+    const r = await patientForm(
+      { name: session.name, age: session.age, gender: session.gender, pregnant: session.pregnant, ref: session.ref },
+      { title: 'Patient details', okLabel: 'Save' });
+    if (!r) return;
+    session.name = r.name; session.age = r.age; session.gender = r.gender;
+    session.pregnant = r.pregnant; session.ref = r.ref;
+    updateIdentityChip(); render();
   };
-  fu.appendChild(toggle);
-  body.appendChild(fu);
+  actions.appendChild(editBtn);
+
+  const recBtn = el('button', { class: 'btn btn-gh', type: 'button' }, 'Open patient records');
+  recBtn.onclick = () => { if (nav.goRecords) nav.goRecords(); };
+  actions.appendChild(recBtn);
+
+  // Baseline / follow-up toggle (visit-scoped).
+  const toggle = el('button', { class: `chip-opt${session.followup ? ' sel' : ''}`, type: 'button', style: 'margin-left:auto' },
+    session.followup ? 'Follow-up ✓' : 'Mark as follow-up');
+  toggle.onclick = () => { session.followup = !session.followup; render(); };
+  actions.appendChild(toggle);
+
+  body.appendChild(actions);
   card.appendChild(body);
   return card;
 }
@@ -1679,7 +1715,7 @@ function render() {
     `<b>Gut Health Screen (v2).</b> A clean-slate screening instrument under co-design. ` +
     `This is an educational screening tool, not a diagnosis.`));
 
-  root.appendChild(sessionCard());
+  root.appendChild(patientBanner());
 
   if (RED_FLAGS.length) root.appendChild(redFlagCard());
 
@@ -2238,7 +2274,8 @@ function newVisitFor(identity, followup) {
   render();
 }
 
-__e.reset = reset; __e.render = render; __e.newVisitFor = newVisitFor; __e.clearPatient = clearPatient;
+function init(c) { nav = c || {}; }
+__e.init = init; __e.reset = reset; __e.render = render; __e.newVisitFor = newVisitFor; __e.clearPatient = clearPatient;
 return __e;
 };
 
@@ -2252,7 +2289,7 @@ return __e;
 __modules['ui-record.js'] = function(__e){
 const { buildTrend } = __req('trend.js');
 const { dysbiosisLens, modifiableFactors } = __req('scales.js');
-const { el, esc, fmtDate, toast, dialogConfirm } = __req('util.js');
+const { el, esc, fmtDate, toast, dialogConfirm, patientForm } = __req('util.js');
 const Store = __req('storage.js');
 
 let ctx;                                   // { goQuestionnaire(ref, followup) }
@@ -2285,7 +2322,8 @@ function renderList(root, db) {
   const search = el('input', { class: 'db-search', type: 'text', placeholder: 'Search by reference…', value: q });
   search.oninput = () => { q = search.value; paint(db); };
   bar.appendChild(search);
-  bar.appendChild(el('button', { class: 'btn btn-g', type: 'button', onclick: () => ctx.goQuestionnaire() }, '+ New questionnaire'));
+  bar.appendChild(el('button', { class: 'btn btn-g', type: 'button', onclick: newPatient }, '+ New patient'));
+  bar.appendChild(el('button', { class: 'btn btn-gh', type: 'button', onclick: () => ctx.goQuestionnaire() }, 'Anonymous screen'));
   bar.appendChild(el('button', { class: 'btn btn-gh', type: 'button', onclick: exportBackup }, 'Export backup'));
   const imp = el('button', { class: 'btn btn-gh', type: 'button', onclick: () => fileInput.click() }, 'Import / merge');
   const fileInput = el('input', { type: 'file', accept: 'application/json,.json', style: 'display:none' });
@@ -2295,6 +2333,13 @@ function renderList(root, db) {
 
   root.appendChild(el('div', { class: 'db-grid', id: 'dbGrid' }));
   paint(db);
+}
+
+// Capture a new patient's details, then start their (baseline) questionnaire.
+async function newPatient() {
+  const r = await patientForm({}, { title: 'New patient', okLabel: 'Start screening →' });
+  if (!r) return;
+  ctx.goQuestionnaire(r, false);
 }
 
 function paint(db) {
@@ -2342,6 +2387,7 @@ function renderDetail(root, db) {
   head.appendChild(el('div', { style: 'flex:1' },
     `<h2 style="margin:0">${esc(patientLabel(p))}</h2>${meta ? `<div class="muted" style="font-size:12px">${meta}</div>` : ''}`));
   const identity = { name: p.name, age: p.age, gender: p.gender, ref: p.ref };
+  head.appendChild(el('button', { class: 'btn btn-gh', type: 'button', onclick: () => editPatient(p) }, '✎ Edit'));
   head.appendChild(el('button', { class: 'btn btn-o', type: 'button', onclick: () => ctx.goQuestionnaire(identity, true) }, '+ New follow-up'));
   root.appendChild(head);
 
@@ -2420,6 +2466,19 @@ async function deletePatient(p) {
   Store.saveDB(db); toast('Record deleted'); render();
 }
 
+// Edit a stored patient's identity in place (name/age/gender/ref). Pregnancy is
+// a per-visit applicability flag, not a stored patient attribute, so it's omitted.
+async function editPatient(p) {
+  const r = await patientForm({ name: p.name, age: p.age, gender: p.gender, ref: p.ref },
+    { title: 'Edit patient details', okLabel: 'Save' });
+  if (!r) return;
+  const db = Store.loadDB();
+  const tgt = (db.patients || []).find(x => x.id === p.id);
+  if (!tgt) return;
+  tgt.name = r.name; tgt.age = r.age; tgt.gender = r.gender; tgt.ref = r.ref || tgt.ref;
+  Store.saveDB(db); toast('Details updated'); render();
+}
+
 function exportBackup() {
   const json = Store.exportDB(Store.loadDB(), 'gut-screen');
   const blob = new Blob([json], { type: 'application/json' });
@@ -2470,6 +2529,8 @@ function boot() {
     // Switch to the questionnaire, optionally pre-bound to a patient identity + follow-up.
     goQuestionnaire: (identity, followup) => { Patient.newVisitFor(identity, followup); setMode('patient'); window.scrollTo({ top: 0 }); },
   });
+  // Let the questionnaire banner jump to the records tab (to pick/manage patients).
+  Patient.init({ goRecords: () => setMode('record') });
   Patient.reset(); Patient.render();
   const sw = document.getElementById('modeSwitch');
   if (sw) sw.addEventListener('click', e => { const b = e.target.closest('.mode-btn'); if (b) setMode(b.dataset.mode); });
