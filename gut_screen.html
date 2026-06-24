@@ -145,6 +145,48 @@ h1{font-size:22px}h2{font-size:17px;margin-bottom:8px}h3{font-size:14px}
 .visit-info{flex:1;min-width:140px}.visit-date{font-weight:600;font-size:13px}.visit-sub{font-size:11px;color:var(--inkt);margin-top:1px}
 .visit-score{text-align:center}.visit-score .v{font-weight:800;font-size:17px}.visit-score .l{font-size:10px;color:var(--inkt)}
 .delta-down{color:#0F6E56}.delta-up{color:#A32D2D}.delta-flat{color:#999}
+
+/* ── Clinician view ──────────────────────────── */
+.clin-badge{display:inline-block;padding:2px 8px;background:#3A4A5A;color:#fff;border-radius:10px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;margin-left:6px;vertical-align:middle}
+.clin-detail{background:#F5F7FA;border:1px solid #C0C8D2;border-radius:var(--r12);padding:16px;margin-bottom:14px}
+.clin-detail .clin-h{font-size:11.5px;font-weight:700;color:#3A4A5A;text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid #D0D7DF;padding-bottom:3px;margin:12px 0 6px}
+.clin-detail .clin-h:first-of-type{margin-top:0}
+.clin-tbl{width:100%;border-collapse:collapse;font-size:11.5px}
+.clin-tbl th{text-align:left;padding:4px 8px;background:#EAEDF0;font-weight:600;font-size:11px}
+.clin-tbl td{padding:4px 8px;border-bottom:1px solid #E8EAED;vertical-align:top}
+.clin-tbl tr:last-child td{border-bottom:none}
+
+/* ── Print layout ────────────────────────────── */
+#print-area{display:none}
+@media print{
+  header,.toast,.ov,.mode{display:none!important}
+  #print-area{display:block!important;font-size:11.5px;line-height:1.5;color:#000;background:#fff;padding:10mm}
+  .pr-logo{font-size:14px;font-weight:700;color:#0F6E56}
+  .pr-title{font-size:20px;font-weight:800;margin:3px 0 2px}
+  .pr-meta{font-size:10.5px;color:#555;margin-bottom:10px;line-height:1.7}
+  hr.pr-divider{border:none;border-top:1.5px solid #D0D0C8;margin:10px 0}
+  .pr-section{margin-bottom:12px}
+  .pr-sh{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#3A4A5A;border-bottom:1px solid #D0D0C8;padding-bottom:3px;margin-bottom:6px}
+  .pr-hero{display:flex;gap:14px;align-items:center;background:#F4FBF7;border:1px solid #5DCAA5;border-radius:8px;padding:10px 12px;margin-bottom:8px}
+  .pr-hero .big{font-size:36px;font-weight:800;color:#0F6E56;line-height:.95}
+  .pr-hero .sub{font-size:10px;color:#555;margin-top:2px}
+  .pr-pill{display:inline-block;padding:2px 8px;border-radius:14px;font-size:10px;font-weight:700;margin-right:3px}
+  .pr-bar-row{display:flex;align-items:center;gap:6px;padding:2px 0;font-size:10.5px}
+  .pr-bar-track{flex:1;height:6px;background:#EEECEA;border-radius:3px;overflow:hidden}
+  .pr-bar-fill{height:100%;border-radius:3px}
+  .pr-alert{background:#FCEBEB;border:1px solid #A32D2D;border-radius:6px;padding:8px 10px;margin-bottom:8px}
+  .pr-alert-t{font-weight:700;color:#A32D2D;font-size:11.5px;margin-bottom:2px}
+  .pr-info{background:#FFF3CD;border:1px solid #FECB1F;border-radius:6px;padding:8px 10px;margin-bottom:8px}
+  .pr-triage{border-radius:6px;padding:8px 10px;margin-bottom:8px;border:1px solid #ccc}
+  .pr-triage.t1{background:#FCEBEB;border-color:#A32D2D}.pr-triage.t2{background:#FAD7C2;border-color:#C2622E}
+  .pr-triage.t3{background:#FAEEDA;border-color:#BA7517}.pr-triage.t4{background:#E1F5EE;border-color:#0F6E56}
+  .pr-tbl{width:100%;border-collapse:collapse;font-size:10.5px;margin-top:2px}
+  .pr-tbl th{text-align:left;padding:3px 6px;background:#F2F0EB;font-weight:600;border-bottom:1px solid #D0D0C8;font-size:10px}
+  .pr-tbl td{padding:3px 6px;border-bottom:1px solid #ECEAEA;vertical-align:top}
+  .pr-tbl tr:last-child td{border-bottom:none}
+  .pr-footer{font-size:9px;color:#999;margin-top:14px;padding-top:8px;border-top:1px solid #D0D0C8;text-align:center}
+  .pr-page-break{page-break-before:always}
+}
 </style>
 </head>
 <body>
@@ -163,6 +205,7 @@ h1{font-size:22px}h2{font-size:17px;margin-bottom:8px}h3{font-size:14px}
 </main>
 <div class="toast" id="toast"></div>
 <div class="ov" id="overlay"><div class="dlg" id="dlg"></div></div>
+<div id="print-area"></div>
 <script>
 
 const __modules = {}; const __cache = {};
@@ -717,7 +760,7 @@ const RED_FLAGS = [
 ];
 function anyRedFlag(answers) { return !!answers && RED_FLAGS.some(f => answers[f.id] === true); }
 function firedRedFlags(answers) { return answers ? RED_FLAGS.filter(f => answers[f.id] === true) : []; }
-const RED_FLAG_BANNER = 'One or more of your answers suggest symptoms that should be assessed directly by a clinician before starting a gut-health protocol. This doesn’t replace that evaluation — please discuss these specific answers with your clinician.';
+const RED_FLAG_BANNER = "One or more of your answers suggest symptoms that should be assessed directly by a clinician before starting a gut-health protocol. This doesn't replace that evaluation — please discuss these specific answers with your clinician.";
 __e.RED_FLAGS = RED_FLAGS; __e.anyRedFlag = anyRedFlag; __e.firedRedFlags = firedRedFlags; __e.RED_FLAG_BANNER = RED_FLAG_BANNER;
 return __e;
 };
@@ -849,7 +892,7 @@ function computeScores(answers, opts) {
     index,
     desc: SEVERITY_DESC[band.label] + (band.capped
       ? (coreUnknown
-          ? ' Capped — the core GI section wasn’t answered, so this result can’t yet be attributed to direct gut symptoms.'
+          ? " Capped — the core GI section wasn't answered, so this result can't yet be attributed to direct gut symptoms."
           : ' Capped — direct gut symptoms are low; the elevation comes mostly from other domains.')
       : ''),
   });
@@ -1212,7 +1255,31 @@ function triage(score, patterns, firedFlags, dys, opts) {
   }
   // Low data confidence — the core GI section wasn't answered.
   result.coreUnknown = !!(score && score.coreUnknown);
-  if (result.coreUnknown) result.reasons.push('Note: the core GI section wasn’t completed, so this triage is provisional.');
+  if (result.coreUnknown) result.reasons.push('Note: the core GI section was not completed, so this triage is provisional.');
+
+  // Pattern-matched investigations / management steps (clinician guidance only).
+  const PI = {
+    nutrient_malabsorption: ['FBC, iron studies, serum B12, folate, vitamin D', 'Coeliac serology (anti-tTG IgA + total IgA)', 'Clinical examination for malabsorption signs'],
+    reflux_upper_gi: ['Empirical PPI trial (4–8 weeks)', 'GI referral if refractory, dysphagia, or unintentional weight loss', 'Review NSAID / aspirin / alcohol intake'],
+    post_disruptor: ['Stool PCR if acutely symptomatic', 'C. difficile PCR if antibiotics in past 3 months', 'Probiotic trial (Lactobacillus rhamnosus GG or Saccharomyces boulardii)'],
+    bloating_fermentation: ['SIBO breath test (lactulose or glucose H₂/CH₄)', 'Low-FODMAP dietitian referral', 'Note fibre/prebiotic paradox response if present'],
+    diarrhoea_dominant: ['Stool calprotectin + stool PCR', 'Coeliac screen (anti-tTG IgA, total IgA)', 'Consider bile acid malabsorption (empirical trial or SeHCAT)'],
+    constipation_dominant: ['Dietary fibre and fluid intake assessment', 'Pelvic floor physiotherapy referral', 'Exclude hypothyroidism (TSH), hypercalcaemia'],
+    mixed_bowel: ['Low-FODMAP dietitian referral', 'Visceral/pelvic manual therapy assessment', 'Gut-brain axis psychological assessment'],
+    psych_gut_load: ['Consider PHQ-9 / GAD-7 if PSS-4 ≥ 10', 'Gut-directed hypnotherapy or CBT referral', 'Mind-body approach to symptom management'],
+  };
+  const RI = {
+    'IBS-C': ['Low-FODMAP trial with dietitian', 'Pelvic floor physiotherapy assessment', 'Soluble fibre (ispaghula husk)'],
+    'IBS-D': ['Stool calprotectin / PCR (exclude infection or IBD)', 'Consider bile acid malabsorption', 'Low-FODMAP trial with supervised reintroduction'],
+    'IBS-M': ['Low-FODMAP dietitian referral', 'Gut-directed psychological intervention (hypnotherapy / CBT)', 'Visceral manual therapy candidacy'],
+    'IBS-U': ['2–4 week symptom diary before specialist referral', 'Dietary trigger review (FODMAP, fibre)', 'Gut-brain axis assessment'],
+  };
+  result.investigations = [];
+  pids.forEach(pid => { if (PI[pid]) result.investigations.push(...PI[pid]); });
+  if (o.romeResult && o.romeResult.criteriaMet && o.romeResult.subtype && RI[o.romeResult.subtype])
+    result.investigations.push(...RI[o.romeResult.subtype]);
+  result.investigations = [...new Set(result.investigations)];
+
   return result;
 }
 
@@ -1467,6 +1534,8 @@ let extras = blankExtras();
 // clears it. NOTE: with a name entered this record holds PII — it stays in this
 // browser's local storage only (never transmitted).
 let session = { name: '', age: '', gender: '', ref: '', followup: false, pregnant: '' };
+let lastCalc = null;       // cached result from the most recent calc(); used by print functions
+let clinicianView = false; // toggle between patient-friendly and clinician-detail results layout
 
 function reset() { answers = {}; redflags = {}; extras = blankExtras(); session.followup = false; }
 
@@ -1761,7 +1830,7 @@ function bristolCard() {
   const card = el('div', { class: 'sec-card' });
   card.appendChild(el('div', { class: 'sec-head', style: 'background:#6B4A2E' }, 'Stool type (Bristol scale)'));
   const body = el('div', { class: 'sec-body' });
-  body.appendChild(el('div', { class: 'q-sub', style: 'padding-top:8px' }, 'Pick the type that best matches your usual stool. Tracked over time, and gently feeds your gut-core score (capped so it can’t dominate).'));
+  body.appendChild(el('div', { class: 'q-sub', style: 'padding-top:8px' }, "Pick the type that best matches your usual stool. Tracked over time, and gently feeds your gut-core score (capped so it can't dominate)."));
   const grid = el('div', { class: 'bristol-grid' });
   BRISTOL_TYPES.forEach(t => {
     const b = el('button', { class: `bristol-opt${extras.bristol === t.n ? ' sel' : ''}`, type: 'button' },
@@ -2069,28 +2138,34 @@ function questionRow(q) {
   return row;
 }
 
-function calc() {
+// Pure computation — no DOM. Used by calc() and printSummary() so print can
+// regenerate results without re-running the render pipeline.
+function computeAll() {
   const answerArr = QUESTIONS.map(q => (answers[q.id] == null ? null : answers[q.id]));
-  const score = computeScores(answerArr, { bristol: extras.bristol }); // Bristol dual-role: also nudges GI core
+  const score = computeScores(answerArr, { bristol: extras.bristol });
   const sv = score.severity;
   const conf = scoreConfidence(score);
-
-  // Drivers + patterns computed up front so the triage layer can use them and
-  // the triage card can sit near the top of the result (the headline next step).
   const ps = pss4Score(extras.pss4);
   const driverExtras = {
     pss4Score: ps, nrsPain: extras.nrsPain, bristol: extras.bristol,
-    bgAnxiety: answers.bg_anxiety, bgMood: answers.bg_mood,   // folded into psych load
+    bgAnxiety: answers.bg_anxiety, bgMood: answers.bg_mood,
     meds: extras.meds, dietFibre: extras.dietFibre, dietProcessed: extras.dietProcessed,
     alcohol: extras.alcohol, activity: extras.activity,
-    abxCourses: extras.abxCourses, dys: extras.dys,           // Dys-R lens inputs
-    rome: extras.rome,                                        // Rome IV corroborating signals
+    abxCourses: extras.abxCourses, dys: extras.dys,
+    rome: extras.rome,
   };
   const patterns = detectPatterns(score, driverExtras, answers);
   const fired = firedRedFlags(redflags);
   const lens = dysbiosisLens(extras);
   const rome = classifyRomeIV(extras.rome, score.clusterNorm);
   const tri = triage(score, patterns, fired, lens, { adhesionSurgery: surgicalFlags(extras).adhesion, romeResult: rome });
+  return { score, sv, conf, driverExtras, patterns, fired, lens, rome, tri };
+}
+
+function calc() {
+  const c = computeAll();
+  lastCalc = c;
+  const { score, sv, conf, driverExtras, patterns, fired, lens, rome, tri } = c;
 
   const out = document.getElementById('patient-results');
   out.innerHTML = '';
@@ -2115,6 +2190,16 @@ function calc() {
   }
 
   if (score.completeness < 80) toast(`${score.completeness}% complete — result shown as provisional.`);
+
+  // Patient / Clinician view toggle
+  const togBar = el('div', { class: 'row', style: 'justify-content:flex-end;gap:6px;margin-bottom:8px' });
+  const ptBtn = el('button', { class: `btn ${clinicianView ? 'btn-gh' : 'btn-o'}`, type: 'button' }, 'Patient view');
+  const clBtn = el('button', { class: `btn ${clinicianView ? 'btn-g' : 'btn-gh'}`, type: 'button' }, 'Clinician view');
+  ptBtn.onclick = () => { clinicianView = false; calc(); };
+  clBtn.onclick = () => { clinicianView = true; calc(); };
+  togBar.appendChild(ptBtn); togBar.appendChild(clBtn);
+  out.appendChild(togBar);
+
   const hero = el('div', { class: 'card' });
   hero.appendChild(el('div', { class: 'hero' },
     `<div><div class="big">${sv.index}%</div><div class="sub">GI Symptom Burden</div></div>
@@ -2141,6 +2226,12 @@ function calc() {
   if (rome.criteriaMet) {
     tcard.appendChild(el('div', { class: 'q-sub', style: 'margin-top:8px;font-weight:600;color:#185FA5' },
       `Meets Rome IV-informed criteria for ${esc(rome.subtype)} — single-visit estimate, not the prospective diary Rome IV was validated against. A pattern to discuss, not a diagnosis.`));
+  }
+  if (clinicianView && tri.investigations && tri.investigations.length) {
+    tcard.appendChild(el('div', { class: 'q-sub', style: 'margin-top:10px;font-weight:600;color:#3A4A5A' }, 'Suggested investigations / management:'));
+    tcard.appendChild(el('ul', { class: 'rf-list', style: 'color:#3A4A5A;margin-top:2px' },
+      tri.investigations.map(i => `<li>${esc(i)}</li>`).join('')));
+    tcard.appendChild(el('div', { class: 'q-sub', style: 'color:#888;font-style:italic;margin-top:3px' }, 'Pattern-matched — apply clinical judgement. Not a protocol.'));
   }
   tcard.appendChild(el('div', { class: 'q-sub', style: 'margin-top:10px;font-style:italic;color:#999' },
     'Clinical guidance for discussion — not a diagnosis or prescription.'));
@@ -2174,7 +2265,7 @@ function calc() {
       const addPts = Math.round((score.secNorm.GI - (max ? sc / max : 0)) * 100);
       const bt = BRISTOL_TYPES.find(t => t.n === extras.bristol);
       bars.appendChild(el('div', { class: 'q-sub', style: 'margin:-4px 0 12px;padding-left:2px;color:var(--inks)' },
-        `↳ Stool transit ${addPts > 0 ? `adds +${addPts} pts to` : 'adds nothing to'} gut-core${bt ? ` · Type ${bt.n} (${esc(bt.tag)})` : ''} — capped so it can’t dominate.`));
+        `↳ Stool transit ${addPts > 0 ? `adds +${addPts} pts to` : 'adds nothing to'} gut-core${bt ? ` · Type ${bt.n} (${esc(bt.tag)})` : ''} — capped so it can't dominate.`));
     }
     // GSRS per-cluster sub-bars: the GI core breaks down into 5 validated
     // syndromes (Reflux, Pain, Indigestion, Diarrhoea, Constipation). Showing
@@ -2223,8 +2314,11 @@ function calc() {
     out.appendChild(pcard);
   }
 
-  // Save-a-visit + pilot-CSV download. Until the clinician/database surface
-  // lands, this is the only way a response enters the pilot dataset.
+  // Clinician detail card — item-level responses, Rome IV raw, pattern rationale,
+  // driver table, and investigation checklist.
+  if (clinicianView) out.appendChild(clinicianDetailCard(c));
+
+  // Save-a-visit + pilot-CSV download + print.
   const actions = el('div', { class: 'card row', style: 'justify-content:flex-end;gap:8px;flex-wrap:wrap' });
   const saveBtn = el('button', { class: 'btn btn-g', type: 'button' }, 'Save this response');
   saveBtn.onclick = () => {
@@ -2251,12 +2345,321 @@ function calc() {
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   };
   actions.appendChild(dlBtn);
+  const ptPrintBtn = el('button', { class: 'btn btn-gh', type: 'button' }, '🖨 Patient summary');
+  ptPrintBtn.onclick = () => printSummary('patient');
+  actions.appendChild(ptPrintBtn);
+  const clPrintBtn = el('button', { class: 'btn btn-gh', type: 'button' }, '🖨 Clinician report');
+  clPrintBtn.onclick = () => printSummary('clinician');
+  actions.appendChild(clPrintBtn);
   const newBtn = el('button', { class: 'btn', type: 'button' }, 'Start new');
   newBtn.onclick = () => { clearPatient(); window.scrollTo({ top: 0, behavior: 'smooth' }); };
   actions.appendChild(newBtn);
   out.appendChild(actions);
 
   out.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+}
+
+// Clinician detail card: item-level responses, Rome IV criteria answers,
+// pattern confidence + rationale, driver raw values, and red flag detail.
+function clinicianDetailCard(c) {
+  const { score, conf, driverExtras, patterns, fired, lens, rome, tri } = c;
+  const card = el('div', { class: 'clin-detail' });
+  card.appendChild(el('h2', { style: 'margin-bottom:10px' }, 'Clinical detail <span class="clin-badge">Clinician view</span>'));
+
+  function chead(txt) { return el('div', { class: 'clin-h' }, txt); }
+  function tbl(thead, rows) {
+    const t = el('table', { class: 'clin-tbl' });
+    t.innerHTML = `<thead><tr>${thead.map(h => `<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${rows}</tbody>`;
+    return t;
+  }
+
+  // Confidence & completeness
+  card.appendChild(chead('Score confidence'));
+  card.appendChild(tbl(['Metric', 'Value'], `
+    <tr><td>Overall completeness</td><td>${score.completeness}%</td></tr>
+    <tr><td>Sections with data</td><td>${score.secAnswered || '—'}</td></tr>
+    <tr><td>Confidence level</td><td>${esc(conf.level)}</td></tr>
+    <tr><td>GI core answered</td><td>${score.coreUnknown ? '<b style="color:#A32D2D">No — result provisional</b>' : 'Yes'}</td></tr>`));
+
+  // Item-level responses per scored section
+  card.appendChild(chead('Item-level responses'));
+  SECTIONS.forEach(sec => {
+    const qs = questionsOf(sec.id);
+    if (!qs.length) return;
+    const sc = score.secScores[sec.id] || 0;
+    const mx = score.secApplicableMax[sec.id] || 0;
+    const pct = mx ? Math.round(sc / mx * 100) : 0;
+    card.appendChild(el('div', { style: 'font-size:11px;font-weight:600;color:#3A4A5A;margin:8px 0 3px;padding:2px 0;border-bottom:1px solid #D8DDE3' },
+      `${esc(sec.full || sec.label)} — ${sc}/${mx} (${pct}%)`));
+    const rows = qs.map(q => {
+      const val = answers[q.id];
+      const labels = scaleFor(q.scale);
+      const disp = val === 'na' ? '<i>N/A</i>' : val == null ? '<span style="color:#999">—</span>' : `${val} — ${esc(labels[val] || '')}`;
+      return `<tr><td>${esc(q.patientText)}</td><td style="white-space:nowrap">${disp}</td></tr>`;
+    }).join('');
+    card.appendChild(tbl(['Question', 'Answer'], rows));
+  });
+
+  // Rome IV criteria detail
+  card.appendChild(chead('Rome IV-informed criteria'));
+  const { ROME_FREQ, ROME_ONSET, ROME_ASSOC } = __req('romeiv.js');
+  const r = extras.rome || {};
+  const rRows = [
+    ['Pain frequency', r.painFreq != null ? `${r.painFreq} — ${esc(ROME_FREQ[r.painFreq] || '')}` : '—'],
+    ['Onset', r.onset != null ? `${r.onset} — ${esc(ROME_ONSET[r.onset] || '')}` : '—'],
+    ...ROME_ASSOC.map(a => [esc(a.label), r[a.id] ? '<b>Yes</b>' : 'No']),
+    ['Result', rome.criteriaMet
+      ? `<b style="color:#185FA5">Criteria met — ${esc(rome.subtype || '')}</b>`
+      : rome.answered ? 'Criteria not met' : '<span style="color:#999">Not answered</span>'],
+  ].map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('');
+  card.appendChild(tbl(['Item', 'Response'], rRows));
+
+  // Microbiome correlate signals
+  if (lens.signals && lens.signals.length) {
+    card.appendChild(chead(`Microbiome-correlate signals (${lens.count}/6)`));
+    card.appendChild(el('ul', { style: 'font-size:11.5px;padding-left:18px;margin:2px 0' },
+      lens.signals.map(s => `<li>${esc(s.label)}</li>`).join('')));
+  }
+
+  // Pattern detail
+  if (patterns.length) {
+    card.appendChild(chead('Pattern analysis'));
+    const ptRows = patterns.map(p =>
+      `<tr><td><b>${esc(p.label)}</b></td>
+       <td><span style="background:${p.confColor};color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;white-space:nowrap">${esc(p.confidence)}</span></td>
+       <td>${esc(p.desc)}</td></tr>`
+    ).join('');
+    card.appendChild(tbl(['Pattern', 'Confidence', 'Rationale'], ptRows));
+  }
+
+  // Modifiable driver raw values
+  card.appendChild(chead('Modifiable driver raw values'));
+  const drRows = modifiableFactors(driverExtras).map(f =>
+    `<tr><td>${f.icon} ${esc(f.label)}</td><td style="color:${f.color}">${esc(f.band)}</td><td style="color:var(--inkt)">${esc(f.score || '')}</td></tr>`
+  ).join('');
+  card.appendChild(tbl(['Factor', 'Band', 'Score'], drRows));
+
+  // Red flag detail
+  if (fired.length) {
+    card.appendChild(chead(`Red flags — ${fired.length} answered Yes`));
+    card.appendChild(el('ul', { style: 'font-size:11.5px;padding-left:18px;color:#A32D2D;margin:2px 0' },
+      fired.map(f => `<li>${esc(f.label)}</li>`).join('')));
+  }
+
+  return card;
+}
+
+// Populate #print-area and call window.print(). Requires lastCalc to be set.
+function printSummary(mode) {
+  if (!lastCalc) { toast('Run the questionnaire first to generate a summary.'); return; }
+  const area = document.getElementById('print-area');
+  if (!area) return;
+  area.innerHTML = '';
+  area.appendChild(mode === 'clinician' ? buildClinicianPrint(lastCalc) : buildPatientPrint(lastCalc));
+  window.print();
+}
+
+function buildPatientPrint(c) {
+  const { score, sv, conf, driverExtras, patterns, fired, lens, rome, tri } = c;
+  const dateStr = new Date().toLocaleDateString('en-AU', { year: 'numeric', month: 'long', day: 'numeric' });
+  const patName = (session.name || '').trim() || (session.ref || '').trim() || 'Anonymous';
+  const isPregnant = session.pregnant === 'yes';
+  const ageNum = parseInt(session.age, 10);
+  const isMinor = !isNaN(ageNum) && ageNum < 18;
+
+  const div = document.createElement('div');
+  let h = `<div class="pr-logo">Beyond Mechanics</div>
+    <div class="pr-title">Gut Health Screen</div>
+    <div class="pr-meta">Prepared for: <b>${esc(patName)}</b>${session.followup ? ' · Follow-up visit' : ' · Baseline screen'}<br>Date: ${esc(dateStr)}</div>
+    <hr class="pr-divider">`;
+
+  if (isPregnant || isMinor) {
+    const note = isPregnant && isMinor ? 'Pregnant and under 18' : isPregnant ? 'Pregnant' : 'Under 18';
+    h += `<div class="pr-info"><b>ℹ️ Note:</b> ${esc(note)}. This screen was developed in a general adult population — discuss results with your clinician before acting.</div>`;
+  }
+  if (fired.length) {
+    h += `<div class="pr-alert"><div class="pr-alert-t">⚠ Please speak with a clinician about the following</div>
+      <ul style="margin:4px 0 0 14px;font-size:10.5px">${fired.map(f => `<li>${esc(f.label)}</li>`).join('')}</ul></div>`;
+  }
+
+  const svCss = { Severe: '#FCEBEB', Significant: '#FAD7C2', 'Mild–Moderate': '#FAEEDA' }[sv.label] || '#E1F5EE';
+  h += `<div class="pr-hero">
+    <div><div class="big">${sv.index}%</div><div class="sub">GI Symptom Burden</div></div>
+    <div><span class="pr-pill" style="background:${svCss};color:#000">${esc(sv.label)}</span>
+    <div style="font-size:10.5px;color:#555;margin-top:4px;max-width:340px">${esc(sv.desc)}</div>
+    <div style="font-size:10px;color:#888;margin-top:4px">Confidence: ${esc(conf.level)} · ${score.completeness}% complete</div></div></div>`;
+
+  h += `<div class="pr-section"><div class="pr-sh">By area</div>`;
+  SECTIONS.forEach(s => {
+    const sc = score.secScores[s.id] || 0, mx = score.secApplicableMax[s.id] || 0;
+    if (!mx) return;
+    const p = Math.round(sc / mx * 100);
+    h += `<div class="pr-bar-row"><span style="min-width:140px;font-size:10.5px">${esc(s.full || s.label)}</span>
+      <div class="pr-bar-track"><div class="pr-bar-fill" style="width:${p}%;background:${s.color || '#0F6E56'}"></div></div>
+      <span style="min-width:36px;text-align:right">${p}%</span></div>`;
+  });
+  h += `</div>`;
+
+  const tierCls = ['', 't1', 't2', 't3', 't4'][tri.level] || 't4';
+  h += `<div class="pr-section"><div class="pr-sh">Suggested next step</div>
+    <div class="pr-triage ${tierCls}">
+      <div style="font-weight:700;font-size:12px">Tier ${tri.level} — ${esc(tri.label)}</div>
+      <div style="font-size:11px;margin-top:4px">${esc(tri.action)}</div>
+      ${tri.reasons.length ? `<div style="font-size:10.5px;color:#555;margin-top:4px">Why: ${tri.reasons.map(esc).join(' · ')}</div>` : ''}
+    </div></div>`;
+
+  const mf = modifiableFactors(driverExtras).filter(f => f.band && f.band !== 'Not answered');
+  if (mf.length) {
+    h += `<div class="pr-section"><div class="pr-sh">Lifestyle factors</div>
+      <table class="pr-tbl"><tbody>${mf.map(f => `<tr><td>${f.icon} ${esc(f.label)}</td><td style="color:${f.color}">${esc(f.band)}</td></tr>`).join('')}</tbody></table></div>`;
+  }
+
+  h += `<div class="pr-footer">This is a screening tool — it is not a diagnosis. Please discuss your results with your clinician.<br>Beyond Mechanics · Gut Health Screen v2 · ${esc(dateStr)}</div>`;
+  div.innerHTML = h;
+  return div;
+}
+
+function buildClinicianPrint(c) {
+  const { score, sv, conf, driverExtras, patterns, fired, lens, rome, tri } = c;
+  const dateStr = new Date().toLocaleDateString('en-AU', { year: 'numeric', month: 'long', day: 'numeric' });
+  const patName = (session.name || '').trim() || 'Not recorded';
+  const ghi = gutHealthIndex(sv.index, lens.count);
+  const priors = priorVisits();
+  const trend = priors.length >= 1 ? buildTrend(priors.concat([currentVisit()])) : null;
+  const { ROME_FREQ, ROME_ONSET, ROME_ASSOC } = __req('romeiv.js');
+  const isPregnant = session.pregnant === 'yes';
+  const ageNum = parseInt(session.age, 10);
+  const isMinor = !isNaN(ageNum) && ageNum < 18;
+
+  const div = document.createElement('div');
+  let h = `<div class="pr-logo">Beyond Mechanics · Gut Health Screen v2</div>
+    <div class="pr-title">Clinical Summary</div>
+    <div class="pr-meta">
+      Patient: <b>${esc(patName)}</b>${session.ref ? ` · Ref: ${esc(session.ref)}` : ''}<br>
+      Age: ${esc(session.age || '—')} · Gender: ${esc(session.gender || '—')}${isPregnant ? ' · <b>Pregnant</b>' : ''}${isMinor ? ' · <b>Under 18</b>' : ''}<br>
+      Visit: ${session.followup ? 'Follow-up' : 'Baseline'} · Date: ${esc(dateStr)}
+    </div><hr class="pr-divider">`;
+
+  if (isPregnant || isMinor) {
+    const note = isPregnant && isMinor ? 'Pregnant and under 18' : isPregnant ? 'Pregnant' : 'Under 18';
+    h += `<div class="pr-info"><b>Applicability:</b> ${esc(note)}. Developed in a general adult population — interpret with clinical context.</div>`;
+  }
+
+  // Triage
+  const tierCls = ['', 't1', 't2', 't3', 't4'][tri.level] || 't4';
+  h += `<div class="pr-section"><div class="pr-sh">Triage</div>
+    <div class="pr-triage ${tierCls}">
+      <div style="font-weight:700">Tier ${tri.level} — ${esc(tri.label)}</div>
+      <div style="margin-top:3px;font-size:11px">${esc(tri.action)}</div>
+      ${tri.reasons.length ? `<div style="font-size:10.5px;margin-top:4px">Reasons: ${tri.reasons.map(esc).join(' · ')}</div>` : ''}
+      ${tri.alsoConsider.length ? `<div style="font-size:10.5px;margin-top:3px">Also consider: ${tri.alsoConsider.map(a => `${esc(a.label)} (${a.reasons.map(esc).join('; ')})`).join(' / ')}</div>` : ''}
+    </div>
+    ${tri.investigations && tri.investigations.length ? `
+      <div style="font-weight:600;font-size:11px;margin:6px 0 3px">Suggested investigations / management:</div>
+      <ul style="margin:0 0 4px 14px;font-size:10.5px;line-height:1.6">${tri.investigations.map(i => `<li>${esc(i)}</li>`).join('')}</ul>
+      <div style="font-size:9.5px;color:#888;font-style:italic">Pattern-matched — apply clinical judgement. Not a protocol.</div>
+    ` : ''}
+  </div>`;
+
+  // Scores
+  h += `<div class="pr-section"><div class="pr-sh">Scores</div>
+    <table class="pr-tbl"><tbody>
+      <tr><td>GI Symptom Burden</td><td><b>${sv.index}%</b> — ${esc(sv.label)}</td></tr>
+      <tr><td>Gut Health Index (blended)</td><td><b>${ghi != null ? ghi : '—'}</b></td></tr>
+      <tr><td>Microbiome-correlate signals</td><td>${lens.count}/6 · ${lens.count >= 2 ? 'High risk' : 'Low risk'}</td></tr>
+      <tr><td>Confidence</td><td>${esc(conf.level)} · ${score.completeness}% complete</td></tr>
+      ${score.coreUnknown ? '<tr><td colspan="2" style="color:#A32D2D;font-weight:600">⚠ Core GI section not answered — result provisional</td></tr>' : ''}
+    </tbody></table></div>`;
+
+  // Red flags
+  h += `<div class="pr-section"><div class="pr-sh">Red flags</div>`;
+  h += fired.length
+    ? `<div class="pr-alert"><div class="pr-alert-t">⚠ ${fired.length} item${fired.length > 1 ? 's' : ''} answered Yes</div>
+       <ul style="margin:4px 0 0 14px;font-size:10.5px">${fired.map(f => `<li>${esc(f.label)}</li>`).join('')}</ul></div>`
+    : `<div style="font-size:11px;color:#555">No red flags answered Yes.</div>`;
+  h += `</div>`;
+
+  // GSRS domain breakdown
+  h += `<div class="pr-section"><div class="pr-sh">Domain breakdown</div>
+    <table class="pr-tbl"><thead><tr><th>Domain</th><th>Score/Max</th><th>%</th></tr></thead><tbody>`;
+  SECTIONS.forEach(s => {
+    const sc = score.secScores[s.id] || 0, mx = score.secApplicableMax[s.id] || 0;
+    h += `<tr><td>${esc(s.full || s.label)}</td><td>${sc}/${mx}</td><td>${mx ? Math.round(sc / mx * 100) + '%' : 'n/a'}</td></tr>`;
+  });
+  if (score.clusterAgg) {
+    ['Reflux', 'Pain', 'Indigestion', 'Diarrhoea', 'Constipation'].forEach(k => {
+      const cl = score.clusterAgg[k]; if (!cl || cl.max === 0) return;
+      h += `<tr><td style="padding-left:14px;color:#666">↳ ${esc(k)}</td><td>${cl.sum}/${cl.max}</td><td>${Math.round(cl.sum / cl.max * 100)}%</td></tr>`;
+    });
+  }
+  h += `</tbody></table></div>`;
+
+  // Rome IV
+  const r = extras.rome || {};
+  h += `<div class="pr-section"><div class="pr-sh">Rome IV-informed bowel-pain pattern</div>
+    <table class="pr-tbl"><tbody>
+      <tr><td>Pain frequency</td><td>${r.painFreq != null ? `${r.painFreq} — ${esc(ROME_FREQ[r.painFreq] || '')}` : '—'}</td></tr>
+      <tr><td>Onset</td><td>${r.onset != null ? `${r.onset} — ${esc(ROME_ONSET[r.onset] || '')}` : '—'}</td></tr>
+      ${ROME_ASSOC.map(a => `<tr><td>${esc(a.label)}</td><td>${r[a.id] ? '<b>Yes</b>' : 'No'}</td></tr>`).join('')}
+      <tr><td><b>Result</b></td><td><b>${rome.criteriaMet ? `Criteria met — ${esc(rome.subtype)}` : rome.answered ? 'Criteria not met' : 'Not answered'}</b></td></tr>
+    </tbody></table>
+    <div style="font-size:9.5px;color:#888;margin-top:3px">Single-visit estimate — not the prospective diary Rome IV was validated against.</div>
+  </div>`;
+
+  // Patterns
+  if (patterns.length) {
+    h += `<div class="pr-section"><div class="pr-sh">Patterns</div>
+      <table class="pr-tbl"><thead><tr><th>Pattern</th><th>Confidence</th><th>Rationale</th></tr></thead><tbody>
+        ${patterns.map(p => `<tr><td><b>${esc(p.label)}</b></td><td>${esc(p.confidence)}</td><td>${esc(p.desc)}</td></tr>`).join('')}
+      </tbody></table></div>`;
+  }
+
+  // Microbiome correlates
+  h += `<div class="pr-section"><div class="pr-sh">Microbiome-correlate signals (${lens.count}/6)</div>`;
+  h += lens.signals && lens.signals.length
+    ? `<ul style="margin:0 0 0 14px;font-size:10.5px">${lens.signals.map(s => `<li>${esc(s.label)}</li>`).join('')}</ul>`
+    : `<div style="font-size:11px;color:#555">No microbiome-correlate signals present.</div>`;
+  h += `</div>`;
+
+  // Modifiable drivers
+  h += `<div class="pr-section"><div class="pr-sh">Modifiable drivers</div>
+    <table class="pr-tbl"><thead><tr><th>Factor</th><th>Band</th><th>Score</th></tr></thead><tbody>
+      ${modifiableFactors(driverExtras).map(f => `<tr><td>${f.icon} ${esc(f.label)}</td><td style="color:${f.color}">${esc(f.band)}</td><td>${esc(f.score || '')}</td></tr>`).join('')}
+    </tbody></table></div>`;
+
+  // Item-level responses (page 2)
+  h += `<div class="pr-section pr-page-break"><div class="pr-sh">Item-level responses</div>`;
+  SECTIONS.forEach(s => {
+    const qs = questionsOf(s.id);
+    if (!qs.length) return;
+    const sc = score.secScores[s.id] || 0, mx = score.secApplicableMax[s.id] || 0;
+    h += `<div style="font-weight:600;font-size:11px;margin:8px 0 2px;color:#3A4A5A">${esc(s.full || s.label)} — ${sc}/${mx} (${mx ? Math.round(sc / mx * 100) + '%' : 'n/a'})</div>
+      <table class="pr-tbl"><tbody>${qs.map(q => {
+        const val = answers[q.id];
+        const labels = scaleFor(q.scale);
+        const disp = val === 'na' ? 'N/A' : val == null ? '—' : `${val} — ${esc(labels[val] || '')}`;
+        return `<tr><td>${esc(q.patientText)}</td><td style="white-space:nowrap">${disp}</td></tr>`;
+      }).join('')}</tbody></table>`;
+  });
+  h += `</div>`;
+
+  // Longitudinal trend (if applicable)
+  if (trend && trend.points.length >= 2) {
+    h += `<div class="pr-section"><div class="pr-sh">Longitudinal progression (${trend.points.length} visits)</div>
+      <table class="pr-tbl"><thead><tr><th>#</th><th>Date</th><th>Type</th><th>Index</th><th>Band</th><th>Δ</th></tr></thead><tbody>
+        ${trend.points.map((p, i) => {
+          const d = p.date ? new Date(p.date).toISOString().slice(0, 10) : '—';
+          const dTxt = p.delta ? `${p.delta.delta > 0 ? '+' : ''}${p.delta.delta} (${esc(p.delta.label)})` : '—';
+          return `<tr><td>${i + 1}</td><td>${esc(d)}</td><td>${p.followup ? 'Follow-up' : 'Baseline'}</td><td>${p.index}%</td><td>${esc(p.band)}</td><td>${dTxt}</td></tr>`;
+        }).join('')}
+      </tbody></table>
+      ${trend.persistent.length ? `<div style="font-size:10.5px;margin-top:4px">Persistent patterns: <b>${trend.persistent.map(id => esc(id.replace(/_/g, ' '))).join(', ')}</b></div>` : ''}
+    </div>`;
+  }
+
+  h += `<div class="pr-footer">Clinical summary — Gut Health Screen v2 · Beyond Mechanics · ${esc(dateStr)}<br>Screening tool only — not a diagnosis or prescription. Apply clinical judgement.</div>`;
+  div.innerHTML = h;
+  return div;
 }
 
 // Start a fresh questionnaire, optionally pre-bound to a patient identity (and
