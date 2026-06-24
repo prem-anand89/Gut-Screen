@@ -1539,8 +1539,9 @@ let extras = blankExtras();
 let session = { name: '', age: '', gender: '', ref: '', followup: false, pregnant: '' };
 let lastCalc = null;       // cached result from the most recent calc(); used by print functions
 let clinicianView = false; // toggle between patient-friendly and clinician-detail results layout
+let loadedVisitId = null;  // set when a saved visit is loaded; saveVisit() updates it in-place
 
-function reset() { answers = {}; redflags = {}; extras = blankExtras(); session.followup = false; }
+function reset() { answers = {}; redflags = {}; extras = blankExtras(); session.followup = false; loadedVisitId = null; }
 
 // The patient's linking key: reference code if given, else name (so name-only
 // clinicians still get visit linking + trends).
@@ -1577,17 +1578,46 @@ function priorVisits() {
 
 function saveVisit() {
   const db = Store.loadDB();
-  const visit = currentVisit();
   const ref = (session.ref || '').trim();
   const name = (session.name || '').trim();
   let patient = findPatient(db);
-  if (patient) {
-    patient.visits = patient.visits || [];
-    patient.visits.push(visit);
-  } else {
-    patient = { id: Store.uid(), code: Store.nextPatientCode(db), ref: ref || null, visits: [visit] };
-    db.patients.push(patient);
+  let visit, isUpdate = false;
+
+  if (loadedVisitId) {
+    // Edit-in-place: find the existing visit record and overwrite its answers/extras/redflags.
+    // The visit id and original date are preserved; a revisedAt timestamp is added.
+    if (patient) {
+      const idx = (patient.visits || []).findIndex(v => v.id === loadedVisitId);
+      if (idx >= 0) {
+        const existing = patient.visits[idx];
+        patient.visits[idx] = Object.assign({}, existing, {
+          followup: !!session.followup,
+          answers: { ...answers },
+          extras: JSON.parse(JSON.stringify(extras)),
+          redflags: { ...redflags },
+          revisedAt: Date.now(),
+        });
+        visit = patient.visits[idx];
+        isUpdate = true;
+      }
+    }
+    if (!isUpdate) {
+      // The loaded visit's patient record no longer exists — fall through to append.
+      loadedVisitId = null;
+    }
   }
+
+  if (!isUpdate) {
+    visit = currentVisit();
+    if (patient) {
+      patient.visits = patient.visits || [];
+      patient.visits.push(visit);
+    } else {
+      patient = { id: Store.uid(), code: Store.nextPatientCode(db), ref: ref || null, visits: [visit] };
+      db.patients.push(patient);
+    }
+  }
+
   // Keep the identity fields current (latest entry wins).
   patient.name = name || patient.name || '';
   patient.age = (session.age || '').trim() || patient.age || '';
@@ -1595,7 +1625,9 @@ function saveVisit() {
   if (ref) patient.ref = ref;
   const saved = Store.saveDB(db);
   if (!saved) throw new Error('Storage write failed — response was not saved.');
-  return { id: visit.id, visits: patient.visits.slice(), linked: !!(ref || name) };
+  // After a successful update the visit is no longer "dirty" — keep loadedVisitId
+  // so repeated saves still update the same record (don't null it here).
+  return { id: visit.id, visits: patient.visits.slice(), linked: !!(ref || name), isUpdate };
 }
 
 // Recall window narrows on follow-ups so the screen is sensitive to recent change.
@@ -2224,10 +2256,15 @@ function calc() {
   out.appendChild(riskMatrixCard(sv, lens));
 
   // Live trend preview: if this patient reference has prior visits, show the
-  // trajectory now (current visit included as 'unsaved'), so follow-ups show
-  // improvement/worsening before the clinician even saves.
+  // trajectory now. For a freshly-completed questionnaire the current visit is
+  // appended as 'unsaved'; for a loaded saved visit it's already in the DB so
+  // we don't duplicate it — just show all saved visits (needs ≥2 to be useful).
   const prior = priorVisits();
-  if (prior.length >= 1) out.appendChild(trendCard(prior.concat([currentVisit()]), true));
+  if (loadedVisitId) {
+    if (prior.length >= 2) out.appendChild(trendCard(prior, false));
+  } else {
+    if (prior.length >= 1) out.appendChild(trendCard(prior.concat([currentVisit()]), true));
+  }
 
   const bars = el('div', { class: 'card' });
   bars.appendChild(el('h2', {}, 'By domain'));
@@ -2301,14 +2338,20 @@ function calc() {
 
   // Save-a-visit + pilot-CSV download + print.
   const actions = el('div', { class: 'card row', style: 'justify-content:flex-end;gap:8px;flex-wrap:wrap' });
-  const saveBtn = el('button', { class: 'btn btn-g', type: 'button' }, 'Save this response');
+  const saveBtn = el('button', { class: 'btn btn-g', type: 'button' }, loadedVisitId ? 'Update this response' : 'Save this response');
   saveBtn.onclick = () => {
     try {
       const r = saveVisit();
-      saveBtn.disabled = true; saveBtn.textContent = 'Saved ✓';
-      toast(r.linked
-        ? `Saved as visit ${r.visits.length} for ${(session.ref || '').trim()}.`
-        : 'Response saved (standalone — add a patient reference to track progress).');
+      saveBtn.disabled = true; saveBtn.textContent = r.isUpdate ? 'Updated ✓' : 'Saved ✓';
+      if (r.isUpdate) {
+        toast(r.linked
+          ? `Visit updated for ${(session.ref || session.name || '').trim()}.`
+          : 'Visit updated.');
+      } else {
+        toast(r.linked
+          ? `Saved as visit ${r.visits.length} for ${(session.ref || '').trim()}.`
+          : 'Response saved (standalone — add a patient reference to track progress).');
+      }
       // Re-point the trend card at the now-persisted series (drops the "unsaved" tag).
       const existing = out.querySelector('#trend-card');
       if (r.visits.length >= 2) { const fresh = trendCard(r.visits, false); existing ? existing.replaceWith(fresh) : out.appendChild(fresh); }
@@ -2387,9 +2430,12 @@ function clinicianDetailCard(c) {
 
   // Confidence & completeness
   card.appendChild(chead('Score confidence'));
+  const secWithData = score.secAnswered
+    ? Object.values(score.secAnswered).filter(s => s.answered > 0).length + ' / ' + Object.keys(score.secAnswered).length
+    : '—';
   card.appendChild(tbl(['Metric', 'Value'], `
     <tr><td>Overall completeness</td><td>${score.completeness}%</td></tr>
-    <tr><td>Sections with data</td><td>${score.secAnswered || '—'}</td></tr>
+    <tr><td>Sections with data</td><td>${esc(String(secWithData))}</td></tr>
     <tr><td>Confidence level</td><td>${esc(conf.level)}</td></tr>
     <tr><td>GI core answered</td><td>${score.coreUnknown ? '<b style="color:#A32D2D">No — result provisional</b>' : 'Yes'}</td></tr>`));
 
@@ -2537,7 +2583,8 @@ function buildClinicianPrint(c) {
   const patName = (session.name || '').trim() || 'Not recorded';
   const ghi = gutHealthIndex(sv.index, lens.count);
   const priors = priorVisits();
-  const trend = priors.length >= 1 ? buildTrend(priors.concat([currentVisit()])) : null;
+  const trendVisits = loadedVisitId ? priors : priors.concat([currentVisit()]);
+  const trend = trendVisits.length >= 2 ? buildTrend(trendVisits) : null;
   const { ROME_FREQ, ROME_ONSET, ROME_ASSOC } = __req('romeiv.js');
   const isPregnant = session.pregnant === 'yes';
   const ageNum = parseInt(session.age, 10);
@@ -2710,6 +2757,7 @@ function loadVisit(identity, visit, showResults) {
   session.ref = id.ref || '';
   session.pregnant = '';
   session.followup = !!v.followup;
+  loadedVisitId = v.id || null;  // save → update this record in-place
   render();
   if (showResults) calc();
 }
@@ -2765,9 +2813,14 @@ function renderClinician() {
   root.appendChild(riskMatrixCard(sv, lens));
   root.appendChild(clinicianDetailCard(c));
 
-  // Longitudinal context if this patient has prior saved visits
+  // Longitudinal context if this patient has prior saved visits.
+  // If a saved visit is loaded, it's already in the DB — don't duplicate it.
   const prior = priorVisits();
-  if (prior.length >= 1) root.appendChild(trendCard(prior.concat([currentVisit()]), true));
+  if (loadedVisitId) {
+    if (prior.length >= 2) root.appendChild(trendCard(prior, false));
+  } else {
+    if (prior.length >= 1) root.appendChild(trendCard(prior.concat([currentVisit()]), true));
+  }
 }
 
 function init(c) { nav = c || {}; }
